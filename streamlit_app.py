@@ -1,67 +1,64 @@
-# ========= streamlit_app.py =========
 import os
 import re
 import time
+from datetime import datetime
 from uuid import uuid4
 from typing import List, Dict
 
+import requests
 import streamlit as st
 from openai import OpenAI
+
+# Weaviate v4
+from weaviate import connect_to_wcs
+from weaviate.auth import AuthApiKey
 import weaviate
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.query import MetadataQuery
 from pyairtable import Table
 
-# ---- MUST be first Streamlit call ----
+# ---- Page config FIRST ----
 st.set_page_config(page_title="Secure Portal", page_icon="🗂️", layout="wide")
 
 # =========================
-# Security / Login (simple)
+#   Env & Constants
 # =========================
-# Primary wall should be Cloudflare Access. Keep this ON only if you want an extra in-app password.
-AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "false").lower() in ("1", "true", "yes")
-if AUTH_ENABLED:
-    APP_PASSWORD = os.environ.get("APP_PASSWORD")
-    if not APP_PASSWORD:
-        st.error("Server misconfigured: APP_PASSWORD not set in environment.")
-        st.stop()
-    with st.sidebar:
-        st.subheader("Login")
-        pwd = st.text_input("Password", type="password")
-        if st.button("Sign in"):
-            st.session_state["authed"] = (pwd == APP_PASSWORD)
-        if st.session_state.get("authed") is not True:
-            st.stop()
-else:
-    # Optional lightweight gate for direct access (e.g., onrender.com) while you iterate.
-    DIRECT_PWD = os.environ.get("RENDER_DIRECT_PASSWORD", "")
-    if DIRECT_PWD:
-        entered = st.text_input("Secure Portal Login — Password", type="password")
-        if entered != DIRECT_PWD:
-            st.stop()
-
-# ======================
-# Config & Shared Clients
-# ======================
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-large")
-W_COLLECTION = "records"  # Weaviate collection name
+W_COLLECTION = os.environ.get("WEAVIATE_COLLECTION", "records")
+AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "")
+AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE_NAME", "")
+QA_WEBHOOK_URL = os.environ.get("QA_WEBHOOK_URL", "")  # optional Zapier/Make webhook
+
+# Gate (optional). Primary wall should be Cloudflare Access.
+DIRECT_PWD = os.environ.get("RENDER_DIRECT_PASSWORD", "")
+if DIRECT_PWD:
+    entered = st.text_input("Secure Portal Login — Password", type="password")
+    if entered != DIRECT_PWD:
+        st.stop()
+
+# =========================
+#   Clients
+# =========================
 
 def get_clients():
     oa = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    wclient = weaviate.connect_to_wcs(
+    wclient = connect_to_wcs(
         cluster_url=os.environ["WEAVIATE_URL"],
-        auth_credentials=weaviate.Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
+        auth_credentials=AuthApiKey(os.environ["WEAVIATE_API_KEY"]),
     )
     return oa, wclient
 
-# =======================
-# Weaviate ← Airtable Ingest
-# =======================
+# =========================
+#   Weaviate Schema / Ingest helpers
+# =========================
 DEFAULT_TEXT_FIELDS = ["Title", "Notes", "Summary", "Body", "Description", "Content"]
+ATTACHMENT_FIELDS = ["Attachments", "Files", "File", "Links"]  # Airtable common names
+
 
 def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
+
 
 def make_text(fields: dict) -> str:
     parts = []
@@ -71,6 +68,22 @@ def make_text(fields: dict) -> str:
     if not parts:
         parts = [f"{k}: {v}" for k, v in fields.items() if isinstance(v, str)]
     return _clean("\n".join(parts))
+
+
+def extract_file_urls(fields: dict) -> list[str]:
+    urls: list[str] = []
+    for key in ATTACHMENT_FIELDS:
+        v = fields.get(key)
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict) and item.get("url"):
+                    urls.append(item["url"])
+                elif isinstance(item, str) and item.startswith("http"):
+                    urls.append(item)
+        elif isinstance(v, str) and v.startswith("http"):
+            urls.append(v)
+    return urls
+
 
 def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
     existing = [c.name for c in client.collections.list_all()]
@@ -84,15 +97,17 @@ def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
             Property(name="source", data_type=DataType.TEXT),
             Property(name="text", data_type=DataType.TEXT),
             Property(name="tags", data_type=DataType.TEXT_ARRAY),
+            Property(name="file_urls", data_type=DataType.TEXT_ARRAY),
             Property(name="airtable_id", data_type=DataType.TEXT, index_searchable=True),
         ],
     )
 
+
 def ingest_airtable_to_weaviate(limit: int | None = None):
     at = Table(
         os.environ["AIRTABLE_API_KEY"],
-        os.environ["AIRTABLE_BASE_ID"],
-        os.environ["AIRTABLE_TABLE_NAME"],
+        AIRTABLE_BASE_ID,
+        AIRTABLE_TABLE_NAME,
     )
     oa, wclient = get_clients()
     try:
@@ -105,6 +120,7 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
                 continue
             title = fields.get("Title") or fields.get("Name") or "(untitled)"
             tags = fields.get("Tags") if isinstance(fields.get("Tags"), list) else []
+            file_urls = extract_file_urls(fields)
 
             emb = oa.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding
 
@@ -112,9 +128,10 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
                 "uuid": str(uuid4()),
                 "properties": {
                     "title": title,
-                    "source": os.environ["AIRTABLE_TABLE_NAME"],
+                    "source": AIRTABLE_TABLE_NAME,
                     "text": text,
                     "tags": tags,
+                    "file_urls": file_urls,
                     "airtable_id": rec["id"],
                 },
                 "vector": emb,
@@ -125,10 +142,8 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
                 count += len(batch)
                 batch = []
                 time.sleep(0.2)
-
             if limit and count >= limit:
                 break
-
         if batch:
             coll.data.insert_many(batch)
             count += len(batch)
@@ -136,9 +151,10 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
     finally:
         wclient.close()
 
-# ===============
-# Weaviate Search
-# ===============
+# =========================
+#   Retrieval + Answering
+# =========================
+
 def weaviate_search(query: str, top_k: int = 5):
     oa, wclient = get_clients()
     try:
@@ -146,7 +162,7 @@ def weaviate_search(query: str, top_k: int = 5):
         res = coll.query.near_text(
             query=query,
             limit=top_k,
-            return_properties=["title", "text", "source", "tags", "airtable_id"],
+            return_properties=["title", "text", "source", "tags", "airtable_id", "file_urls"],
             return_metadata=MetadataQuery(distance=True),
         )
         items = []
@@ -158,13 +174,15 @@ def weaviate_search(query: str, top_k: int = 5):
                 "source": props.get("source"),
                 "tags": props.get("tags") or [],
                 "airtable_id": props.get("airtable_id"),
+                "file_urls": props.get("file_urls") or [],
                 "score": 1 - (o.metadata.distance or 0),
             })
         return items
     finally:
         wclient.close()
 
-def build_context(snippets, max_chars=4000):
+
+def build_context(snippets, max_chars=5000):
     out, total = [], 0
     for s in snippets:
         chunk = f"Title: {s['title']}\nScore: {s['score']:.2f}\nText: {s['text']}\n---\n"
@@ -172,6 +190,7 @@ def build_context(snippets, max_chars=4000):
             break
         out.append(chunk); total += len(chunk)
     return "".join(out)
+
 
 def answer_with_gpt(question: str, context_block: str) -> str:
     oa, _ = get_clients()
@@ -187,116 +206,99 @@ def answer_with_gpt(question: str, context_block: str) -> str:
     resp = oa.chat.completions.create(model=OPENAI_MODEL, messages=messages, temperature=0.2)
     return resp.choices[0].message.content
 
-# =========
-#   UI
-# =========
-st.title("🗂️ Secure Portal")
 
-tab_upload, tab_search, tab_analyze, tab_chat, tab_settings = st.tabs(
-    ["Upload/Import", "Search", "Analyze", "Chat", "Settings"]
-)
+def airtable_record_url(base_id: str, table_id_or_name: str, record_id: str) -> str:
+    # Works with table name too; Airtable will resolve. If you know tblXXXXXXXX you can pass it.
+    return f"https://airtable.com/{base_id}/{table_id_or_name}/{record_id}"
 
-# Upload / Import
-with tab_upload:
-    st.subheader("Upload files")
-    up = st.file_uploader(
-        "Drop PDFs, images, audio/video, or zip bundles",
-        type=["pdf", "png", "jpg", "jpeg", "mov", "mp4", "mp3", "wav", "zip"],
-        accept_multiple_files=True,
-    )
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        dest = st.selectbox("Destination", ["Intake → Make", "Direct → Zapier Webhook", "Local (debug)"])
-    with col_b:
-        tag = st.text_input("Tag / Case ID (optional)", placeholder="e.g., ofw_batch_aug11")
 
-    if st.button("Ingest (placeholder)"):
-        if not up:
-            st.warning("Please add at least one file.")
-        else:
-            files_meta = [{"name": f.name, "size": f.size, "type": f.type} for f in up]
-            with st.spinner("Sending to pipeline…"):
-                time.sleep(0.3)  # placeholder
-            st.success(f"Queued {len(files_meta)} files for ingestion.")
-            st.json(files_meta)
+def log_qna_webhook(question: str, answer: str, hits: list[dict]):
+    if not QA_WEBHOOK_URL:
+        return
+    payload = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "question": question,
+        "answer": answer,
+        "sources": hits,
+    }
+    try:
+        requests.post(QA_WEBHOOK_URL, json=payload, timeout=6)
+    except Exception:
+        pass
 
-# Search (placeholder)
-with tab_search:
-    st.subheader("Search records (debug)")
-    q = st.text_input("Query", placeholder="e.g., late pickups in July")
-    if st.button("Search (Weaviate)", key="search_btn"):
-        with st.spinner("Searching…"):
-            hits = weaviate_search(q or "", top_k=5)
-        if not hits:
-            st.info("No matches yet.")
-        else:
-            for h in hits:
-                with st.expander(f"{h['title']} • score {h['score']:.2f}"):
-                    st.write(h["text"][:1200] + ("…" if len(h["text"]) > 1200 else ""))
-                    st.caption(f"Tags: {', '.join(h['tags']) if h['tags'] else '—'} | Source: {h['source']} | Airtable ID: {h['airtable_id']}")
+# =========================
+#   Minimal Chat UI
+# =========================
+st.title("💬 Secure Chat")
 
-# Analyze (placeholder)
-with tab_analyze:
-    st.subheader("Ask a question about your dataset (placeholder)")
-    prompt = st.text_area("Question", placeholder="Summarize OFW messages from May showing scheduling conflicts…")
-    if st.button("Run analysis (placeholder)"):
-        if not prompt.strip():
-            st.warning("Type a question first.")
-        else:
-            with st.spinner("Analyzing…"):
-                time.sleep(0.2)
-            st.success("Example only — wire your analysis backend here.")
+# Left column: history; Right: chat
+left, right = st.columns([0.28, 0.72])
 
-# Chat (Weaviate-augmented)
-with tab_chat:
-    st.subheader("Chat with your records")
-    q = st.text_input("Ask a question", placeholder="e.g., Summarize incidents involving late pickups in May 2024")
-    k = st.slider("How many records to search", 1, 10, 5)
+if "history" not in st.session_state:
+    st.session_state.history = []  # list of {q, a, hits}
 
-    if st.button("Ask", key="chat_btn"):
-        if not q.strip():
-            st.warning("Type a question first.")
-        else:
-            with st.spinner("Searching your Weaviate collection…"):
-                hits = weaviate_search(q, top_k=k)
-
-            if not hits:
-                st.info("No matching records found. Try re-ingesting or broadening your question.")
-            else:
-                st.write("**Top matches (debug):**")
-                for h in hits:
-                    with st.expander(f"{h['title']} • score {h['score']:.2f}"):
-                        st.write(h["text"][:1200] + ("…" if len(h["text"]) > 1200 else ""))
-                        st.caption(f"Tags: {', '.join(h['tags']) if h['tags'] else '—'} | Source: {h['source']} | Airtable ID: {h['airtable_id']}")
-
-                context_block = build_context(hits)
-                with st.spinner("Thinking with context…"):
-                    answer = answer_with_gpt(q, context_block)
-                st.write("### Answer")
-                st.write(answer)
-
-# Settings / status
-with tab_settings:
-    st.subheader("Settings (server view)")
-    st.write({
-        "APP_ENV": os.environ.get("APP_ENV", "production"),
-        "AUTH_ENABLED": AUTH_ENABLED,
-        "OPENAI_MODEL": OPENAI_MODEL,
-        "OPENAI_EMBED_MODEL": EMBED_MODEL,
-        "WEAVIATE_URL_SET": bool(os.environ.get("WEAVIATE_URL")),
-        "AIRTABLE_BASE_ID": os.environ.get("AIRTABLE_BASE_ID", "—"),
-        "AIRTABLE_TABLE_NAME": os.environ.get("AIRTABLE_TABLE_NAME", "—"),
-    })
-    st.info("Keep secrets in Render → Environment. Rotate keys if shared.")
-
-# Sidebar: Ingest button
-with st.sidebar:
-    st.markdown("### Weaviate Loader")
+with left:
+    st.subheader("History")
+    if not st.session_state.history:
+        st.caption("No questions yet.")
+    else:
+        for i, item in enumerate(reversed(st.session_state.history[-20:])):
+            label = item["q"][:60] + ("…" if len(item["q"]) > 60 else "")
+            if st.button(label, key=f"hist_{i}"):
+                st.session_state["prefill"] = item["q"]
+    st.divider()
+    st.subheader("Sync")
     lim = st.number_input("Max rows to ingest (0 = all)", min_value=0, value=0, step=50)
-    if st.button("Ingest Airtable → Weaviate"):
+    if st.button("Sync Airtable → Weaviate"):
         n = None if lim == 0 else lim
-        with st.spinner("Embedding and loading to Weaviate…"):
+        with st.spinner("Embedding and loading…"):
             res = ingest_airtable_to_weaviate(limit=n)
         st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
-# ========= end file =========
 
+with right:
+    st.subheader("Ask anything about your records")
+    default_text = st.session_state.pop("prefill", "")
+    user_q = st.chat_input("Type your question…", key="chat_input")
+    if default_text and not user_q:
+        st.chat_message("user").write(default_text)
+        user_q = default_text
+
+    if user_q:
+        st.chat_message("user").write(user_q)
+        with st.spinner("Searching your Weaviate collection…"):
+            hits = weaviate_search(user_q, top_k=5)
+
+        if not hits:
+            answer = "I couldn't find matching records yet. Try syncing Airtable or broadening your question."
+            st.chat_message("assistant").write(answer)
+            st.session_state.history.append({"q": user_q, "a": answer, "hits": []})
+        else:
+            # Show sources panel
+            with st.expander("Show sources"):
+                for h in hits:
+                    st.markdown(f"**{h['title']}**  •  score {h['score']:.2f}")
+                    st.write(h["text"][:1000] + ("…" if len(h["text"]) > 1000 else ""))
+                    # Airtable record link
+                    if AIRTABLE_BASE_ID and AIRTABLE_TABLE_NAME and h.get("airtable_id"):
+                        url = airtable_record_url(AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME, h["airtable_id"])
+                        st.markdown(f"🔗 [Airtable record]({url})")
+                    # File links
+                    if h.get("file_urls"):
+                        for u in h["file_urls"][:5]:
+                            st.markdown(f"📎 [File]({u})")
+                    st.write("—")
+
+            context_block = build_context(hits)
+            with st.spinner("Thinking with context…"):
+                answer = answer_with_gpt(user_q, context_block)
+            st.chat_message("assistant").write(answer)
+            st.session_state.history.append({"q": user_q, "a": answer, "hits": hits})
+            log_qna_webhook(user_q, answer, hits)
+
+# Footer debug
+with st.sidebar:
+    st.caption({
+        "OPENAI_MODEL": OPENAI_MODEL,
+        "EMBED_MODEL": EMBED_MODEL,
+        "WEAVIATE": getattr(weaviate, "__version__", "unknown"),
+    })
