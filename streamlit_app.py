@@ -1,172 +1,73 @@
+# ========= streamlit_app.py =========
 import os
-import streamlit as st
-
-# Optional: Detect Cloudflare header to skip password for Cloudflare Access
-cf_email = os.environ.get("CF_BYPASS_EMAIL")  # We'll set this in Render
-
-# If no Cloudflare Access email is detected, require password
-# For Render direct URL, you'll have to enter this password
-require_password = os.environ.get("RENDER_DIRECT_PASSWORD")
-
-if not cf_email:
-    st.write("## Secure Portal Login")
-    password_input = st.text_input("Enter access password:", type="password")
-    if password_input != require_password:
-        st.stop()
-
-import json
+import re
 import time
+from uuid import uuid4
 from typing import List, Dict
 
 import streamlit as st
+from openai import OpenAI
+import weaviate
+from weaviate.classes.config import Configure, Property, DataType
+from weaviate.classes.query import MetadataQuery
+from pyairtable import Table
 
-# ----------------------------
-# App & security configuration
-# ----------------------------
-st.set_page_config(page_title="Custody Documentation Assistant", page_icon="🗂️", layout="wide")
+# ---- MUST be first Streamlit call ----
+st.set_page_config(page_title="Secure Portal", page_icon="🗂️", layout="wide")
 
-# Toggle in-app auth (you can keep this OFF if Cloudflare Access is protecting the app)
+# =========================
+# Security / Login (simple)
+# =========================
+# Primary wall should be Cloudflare Access. Keep this ON only if you want an extra in-app password.
 AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "false").lower() in ("1", "true", "yes")
-
 if AUTH_ENABLED:
-    # Lightweight in-app password gate (kept simple since Cloudflare Access is the primary wall)
-    # Set env var APP_PASSWORD to a strong value in Render.
     APP_PASSWORD = os.environ.get("APP_PASSWORD")
     if not APP_PASSWORD:
-        st.error("Server misconfigured: APP_PASSWORD not set. Set it in Render → Environment.")
+        st.error("Server misconfigured: APP_PASSWORD not set in environment.")
         st.stop()
-
     with st.sidebar:
         st.subheader("Login")
         pwd = st.text_input("Password", type="password")
         if st.button("Sign in"):
-            if pwd == APP_PASSWORD:
-                st.session_state["authed"] = True
-            else:
-                st.error("Incorrect password")
+            st.session_state["authed"] = (pwd == APP_PASSWORD)
         if st.session_state.get("authed") is not True:
             st.stop()
+else:
+    # Optional lightweight gate for direct access (e.g., onrender.com) while you iterate.
+    DIRECT_PWD = os.environ.get("RENDER_DIRECT_PASSWORD", "")
+    if DIRECT_PWD:
+        entered = st.text_input("Secure Portal Login — Password", type="password")
+        if entered != DIRECT_PWD:
+            st.stop()
 
-
-# ----------------------------
-# Helper placeholders
-# ----------------------------
-def run_ingest(files: List[Dict]):
-    # TODO: wire up your existing automation endpoints here
-    time.sleep(0.3)
-    return {"status": "ok", "count": len(files)}
-
-def run_analysis(query: str):
-    # TODO: call your GPT/Render/Zapier/Make endpoints
-    time.sleep(0.2)
-    return {
-        "summary_title": "Sample Result",
-        "summary": "This is a placeholder. Plug in your analysis backend here.",
-        "flags": ["Needs_Review"]
-    }
-
-def search_records(term: str):
-    # TODO: connect to Airtable/DB/index
-    time.sleep(0.2)
-    return [
-        {"title": "OFW Message — 2023-09-14", "id": "rec_abc123", "score": 0.89},
-        {"title": "DSS Report — 2024-05-01", "id": "rec_def456", "score": 0.82},
-    ]
-
-
-# ----------------------------
-# UI
-# ----------------------------
-st.title("🗂️ Custody Documentation Assistant")
-
-tab_upload, tab_search, tab_analyze, tab_settings = st.tabs(
-    ["Upload/Import", "Search", "Analyze", "Settings"]
-)
-
-with tab_upload:
-    st.subheader("Upload files")
-    up = st.file_uploader(
-        "Drop PDFs, images, audio/video, or zip bundles",
-        type=["pdf", "png", "jpg", "jpeg", "mov", "mp4", "mp3", "wav", "zip"],
-        accept_multiple_files=True
-    )
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        dest = st.selectbox("Destination", ["Intake → Make", "Direct → Zapier Webhook", "Local (debug)"])
-    with col_b:
-        tag = st.text_input("Tag / Case ID (optional)", placeholder="e.g., ofw_batch_aug11")
-
-    if st.button("Ingest"):
-        if not up:
-            st.warning("Please add at least one file.")
-        else:
-            files_meta = [{"name": f.name, "size": f.size, "type": f.type} for f in up]
-            with st.spinner("Sending to pipeline…"):
-                res = run_ingest(files_meta)
-            st.success(f"Ingested {res['count']} files.")
-            st.json(res)
-
-with tab_search:
-    st.subheader("Search records")
-    q = st.text_input("Query", placeholder="e.g., late pickups in July; mention of daycare visits")
-    if st.button("Search"):
-        with st.spinner("Searching…"):
-            results = search_records(q)
-        for r in results:
-            with st.expander(f"{r['title']}  •  score {r['score']:.2f}"):
-                st.code(r["id"])
-
-with tab_analyze:
-    st.subheader("Ask a question about your dataset")
-    prompt = st.text_area("Question", placeholder="Summarize all OFW messages from May showing scheduling conflicts…")
-    if st.button("Run analysis"):
-        if not prompt.strip():
-            st.warning("Type a question first.")
-        else:
-            with st.spinner("Analyzing…"):
-                out = run_analysis(prompt)
-            st.success("Done")
-            st.write(f"### {out['summary_title']}")
-            st.write(out["summary"])
-            st.write("**Flags:** ", ", ".join(out.get("flags", [])))
-
-with tab_settings:
-    st.subheader("Settings")
-    st.caption("These are environment-driven in production. Values below show what the server sees (non-secret).")
-    st.write({
-        "AUTH_ENABLED": AUTH_ENABLED,
-        "ROBOT_BLOCK": os.environ.get("ROBOT_BLOCK", "true"),
-        "APP_ENV": os.environ.get("APP_ENV", "production"),
-    })
-    st.info("Security Tip: Keep sensitive keys in Render Environment Variables, not hard-coded.")
-
-import os, time, re
-from uuid import uuid4
-
-import streamlit as st
-from pyairtable import Table
-from openai import OpenAI
-
-import weaviate
-from weaviate.classes.config import Configure, Property, DataType
-
-# ---------- config ----------
+# ======================
+# Config & Shared Clients
+# ======================
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-large")
-W_COLLECTION = "records"   # Weaviate collection name (change if you like)
+W_COLLECTION = "records"  # Weaviate collection name
 
-# Which Airtable fields to concatenate into the searchable "text"
+def get_clients():
+    oa = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    wclient = weaviate.connect_to_weaviate_cloud(
+        cluster_url=os.environ["WEAVIATE_URL"],
+        auth_credentials=weaviate.Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
+    )
+    return oa, wclient
+
+# =======================
+# Weaviate ← Airtable Ingest
+# =======================
 DEFAULT_TEXT_FIELDS = ["Title", "Notes", "Summary", "Body", "Description", "Content"]
 
 def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 def make_text(fields: dict) -> str:
-    # Build a single body of text from likely columns; adjust as needed
     parts = []
     for key in DEFAULT_TEXT_FIELDS:
         if key in fields and fields[key]:
             parts.append(f"{key}: {fields[key]}")
-    # Fall back to joining all text-ish values if the above are empty
     if not parts:
         parts = [f"{k}: {v}" for k, v in fields.items() if isinstance(v, str)]
     return _clean("\n".join(parts))
@@ -177,7 +78,7 @@ def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
         return client.collections.get(name)
     return client.collections.create(
         name=name,
-        vectorizer_config=Configure.Vectorizer.none(),  # we provide our own vectors
+        vectorizer_config=Configure.Vectorizer.none(),  # we provide vectors
         properties=[
             Property(name="title", data_type=DataType.TEXT),
             Property(name="source", data_type=DataType.TEXT),
@@ -188,35 +89,23 @@ def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
     )
 
 def ingest_airtable_to_weaviate(limit: int | None = None):
-    # --- clients ---
     at = Table(
         os.environ["AIRTABLE_API_KEY"],
         os.environ["AIRTABLE_BASE_ID"],
         os.environ["AIRTABLE_TABLE_NAME"],
     )
-    wclient = weaviate.connect_to_weaviate_cloud(
-        cluster_url=os.environ["WEAVIATE_URL"],
-        auth_credentials=weaviate.Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
-        headers={"X-OpenAI-Api-Key": os.environ.get("OPENAI_API_KEY", "")},  # optional passthrough
-    )
-    oa = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-
+    oa, wclient = get_clients()
     try:
         coll = ensure_weaviate_collection(wclient, W_COLLECTION)
-
-        # Pull rows from Airtable (handles pagination)
-        count = 0
-        batch = []
+        count, batch = 0, []
         for rec in at.iterate(page_size=50):
             fields = rec.get("fields", {})
             text = make_text(fields)
             if not text:
                 continue
-
             title = fields.get("Title") or fields.get("Name") or "(untitled)"
             tags = fields.get("Tags") if isinstance(fields.get("Tags"), list) else []
 
-            # Create embedding
             emb = oa.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding
 
             batch.append({
@@ -231,12 +120,11 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
                 "vector": emb,
             })
 
-            # Write to Weaviate in small batches
             if len(batch) >= 25:
                 coll.data.insert_many(batch)
                 count += len(batch)
                 batch = []
-                time.sleep(0.2)  # gentle pacing
+                time.sleep(0.2)
 
             if limit and count >= limit:
                 break
@@ -244,12 +132,164 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
         if batch:
             coll.data.insert_many(batch)
             count += len(batch)
-
         return {"status": "ok", "ingested": count, "collection": W_COLLECTION}
     finally:
         wclient.close()
 
-# ---------- Streamlit button to run it ----------
+# ===============
+# Weaviate Search
+# ===============
+def weaviate_search(query: str, top_k: int = 5):
+    oa, wclient = get_clients()
+    try:
+        coll = wclient.collections.get(W_COLLECTION)
+        res = coll.query.near_text(
+            query=query,
+            limit=top_k,
+            return_properties=["title", "text", "source", "tags", "airtable_id"],
+            return_metadata=MetadataQuery(distance=True),
+        )
+        items = []
+        for o in res.objects:
+            props = o.properties or {}
+            items.append({
+                "title": props.get("title") or "(untitled)",
+                "text": props.get("text") or "",
+                "source": props.get("source"),
+                "tags": props.get("tags") or [],
+                "airtable_id": props.get("airtable_id"),
+                "score": 1 - (o.metadata.distance or 0),
+            })
+        return items
+    finally:
+        wclient.close()
+
+def build_context(snippets, max_chars=4000):
+    out, total = [], 0
+    for s in snippets:
+        chunk = f"Title: {s['title']}\nScore: {s['score']:.2f}\nText: {s['text']}\n---\n"
+        if total + len(chunk) > max_chars:
+            break
+        out.append(chunk); total += len(chunk)
+    return "".join(out)
+
+def answer_with_gpt(question: str, context_block: str) -> str:
+    oa, _ = get_clients()
+    system = (
+        "You are a careful assistant helping prepare and organize sensitive custody documentation. "
+        "Use the provided CONTEXT to answer the question. If the answer isn't in the context, say what "
+        "is missing and suggest what evidence to gather. Be concise, neutral, and factual. Avoid legal advice."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"QUESTION:\n{question}\n\nCONTEXT:\n{context_block}"},
+    ]
+    resp = oa.chat.completions.create(model=OPENAI_MODEL, messages=messages, temperature=0.2)
+    return resp.choices[0].message.content
+
+# =========
+#   UI
+# =========
+st.title("🗂️ Secure Portal")
+
+tab_upload, tab_search, tab_analyze, tab_chat, tab_settings = st.tabs(
+    ["Upload/Import", "Search", "Analyze", "Chat", "Settings"]
+)
+
+# Upload / Import
+with tab_upload:
+    st.subheader("Upload files")
+    up = st.file_uploader(
+        "Drop PDFs, images, audio/video, or zip bundles",
+        type=["pdf", "png", "jpg", "jpeg", "mov", "mp4", "mp3", "wav", "zip"],
+        accept_multiple_files=True,
+    )
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        dest = st.selectbox("Destination", ["Intake → Make", "Direct → Zapier Webhook", "Local (debug)"])
+    with col_b:
+        tag = st.text_input("Tag / Case ID (optional)", placeholder="e.g., ofw_batch_aug11")
+
+    if st.button("Ingest (placeholder)"):
+        if not up:
+            st.warning("Please add at least one file.")
+        else:
+            files_meta = [{"name": f.name, "size": f.size, "type": f.type} for f in up]
+            with st.spinner("Sending to pipeline…"):
+                time.sleep(0.3)  # placeholder
+            st.success(f"Queued {len(files_meta)} files for ingestion.")
+            st.json(files_meta)
+
+# Search (placeholder)
+with tab_search:
+    st.subheader("Search records (debug)")
+    q = st.text_input("Query", placeholder="e.g., late pickups in July")
+    if st.button("Search (Weaviate)", key="search_btn"):
+        with st.spinner("Searching…"):
+            hits = weaviate_search(q or "", top_k=5)
+        if not hits:
+            st.info("No matches yet.")
+        else:
+            for h in hits:
+                with st.expander(f"{h['title']} • score {h['score']:.2f}"):
+                    st.write(h["text"][:1200] + ("…" if len(h["text"]) > 1200 else ""))
+                    st.caption(f"Tags: {', '.join(h['tags']) if h['tags'] else '—'} | Source: {h['source']} | Airtable ID: {h['airtable_id']}")
+
+# Analyze (placeholder)
+with tab_analyze:
+    st.subheader("Ask a question about your dataset (placeholder)")
+    prompt = st.text_area("Question", placeholder="Summarize OFW messages from May showing scheduling conflicts…")
+    if st.button("Run analysis (placeholder)"):
+        if not prompt.strip():
+            st.warning("Type a question first.")
+        else:
+            with st.spinner("Analyzing…"):
+                time.sleep(0.2)
+            st.success("Example only — wire your analysis backend here.")
+
+# Chat (Weaviate-augmented)
+with tab_chat:
+    st.subheader("Chat with your records")
+    q = st.text_input("Ask a question", placeholder="e.g., Summarize incidents involving late pickups in May 2024")
+    k = st.slider("How many records to search", 1, 10, 5)
+
+    if st.button("Ask", key="chat_btn"):
+        if not q.strip():
+            st.warning("Type a question first.")
+        else:
+            with st.spinner("Searching your Weaviate collection…"):
+                hits = weaviate_search(q, top_k=k)
+
+            if not hits:
+                st.info("No matching records found. Try re-ingesting or broadening your question.")
+            else:
+                st.write("**Top matches (debug):**")
+                for h in hits:
+                    with st.expander(f"{h['title']} • score {h['score']:.2f}"):
+                        st.write(h["text"][:1200] + ("…" if len(h["text"]) > 1200 else ""))
+                        st.caption(f"Tags: {', '.join(h['tags']) if h['tags'] else '—'} | Source: {h['source']} | Airtable ID: {h['airtable_id']}")
+
+                context_block = build_context(hits)
+                with st.spinner("Thinking with context…"):
+                    answer = answer_with_gpt(q, context_block)
+                st.write("### Answer")
+                st.write(answer)
+
+# Settings / status
+with tab_settings:
+    st.subheader("Settings (server view)")
+    st.write({
+        "APP_ENV": os.environ.get("APP_ENV", "production"),
+        "AUTH_ENABLED": AUTH_ENABLED,
+        "OPENAI_MODEL": OPENAI_MODEL,
+        "OPENAI_EMBED_MODEL": EMBED_MODEL,
+        "WEAVIATE_URL_SET": bool(os.environ.get("WEAVIATE_URL")),
+        "AIRTABLE_BASE_ID": os.environ.get("AIRTABLE_BASE_ID", "—"),
+        "AIRTABLE_TABLE_NAME": os.environ.get("AIRTABLE_TABLE_NAME", "—"),
+    })
+    st.info("Keep secrets in Render → Environment. Rotate keys if shared.")
+
+# Sidebar: Ingest button
 with st.sidebar:
     st.markdown("### Weaviate Loader")
     lim = st.number_input("Max rows to ingest (0 = all)", min_value=0, value=0, step=50)
@@ -258,5 +298,4 @@ with st.sidebar:
         with st.spinner("Embedding and loading to Weaviate…"):
             res = ingest_airtable_to_weaviate(limit=n)
         st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
-
-
+# ========= end file =========
