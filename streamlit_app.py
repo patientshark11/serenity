@@ -49,7 +49,7 @@ W_COLLECTION = "records"  # Weaviate collection name
 
 def get_clients():
     oa = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    wclient = weaviate.connect_to_weaviate_cloud(
+    wclient = weaviate.connect_to_wcs(
         cluster_url=os.environ["WEAVIATE_URL"],
         auth_credentials=weaviate.Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
     )
@@ -299,3 +299,4 @@ with st.sidebar:
             res = ingest_airtable_to_weaviate(limit=n)
         st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
 # ========= end file =========
+
