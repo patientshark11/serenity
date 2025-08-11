@@ -1,4 +1,19 @@
 import os
+import streamlit as st
+
+# Optional: Detect Cloudflare header to skip password for Cloudflare Access
+cf_email = os.environ.get("CF_BYPASS_EMAIL")  # We'll set this in Render
+
+# If no Cloudflare Access email is detected, require password
+# For Render direct URL, you'll have to enter this password
+require_password = os.environ.get("RENDER_DIRECT_PASSWORD")
+
+if not cf_email:
+    st.write("## Secure Portal Login")
+    password_input = st.text_input("Enter access password:", type="password")
+    if password_input != require_password:
+        st.stop()
+
 import json
 import time
 from typing import List, Dict
@@ -124,3 +139,4 @@ with tab_settings:
         "APP_ENV": os.environ.get("APP_ENV", "production"),
     })
     st.info("Security Tip: Keep sensitive keys in Render Environment Variables, not hard-coded.")
+
