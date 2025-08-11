@@ -140,3 +140,123 @@ with tab_settings:
     })
     st.info("Security Tip: Keep sensitive keys in Render Environment Variables, not hard-coded.")
 
+import os, time, re
+from uuid import uuid4
+
+import streamlit as st
+from pyairtable import Table
+from openai import OpenAI
+
+import weaviate
+from weaviate.classes.config import Configure, Property, DataType
+
+# ---------- config ----------
+EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-large")
+W_COLLECTION = "records"   # Weaviate collection name (change if you like)
+
+# Which Airtable fields to concatenate into the searchable "text"
+DEFAULT_TEXT_FIELDS = ["Title", "Notes", "Summary", "Body", "Description", "Content"]
+
+def _clean(s: str) -> str:
+    return re.sub(r"\s+", " ", s or "").strip()
+
+def make_text(fields: dict) -> str:
+    # Build a single body of text from likely columns; adjust as needed
+    parts = []
+    for key in DEFAULT_TEXT_FIELDS:
+        if key in fields and fields[key]:
+            parts.append(f"{key}: {fields[key]}")
+    # Fall back to joining all text-ish values if the above are empty
+    if not parts:
+        parts = [f"{k}: {v}" for k, v in fields.items() if isinstance(v, str)]
+    return _clean("\n".join(parts))
+
+def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
+    existing = [c.name for c in client.collections.list_all()]
+    if name in existing:
+        return client.collections.get(name)
+    return client.collections.create(
+        name=name,
+        vectorizer_config=Configure.Vectorizer.none(),  # we provide our own vectors
+        properties=[
+            Property(name="title", data_type=DataType.TEXT),
+            Property(name="source", data_type=DataType.TEXT),
+            Property(name="text", data_type=DataType.TEXT),
+            Property(name="tags", data_type=DataType.TEXT_ARRAY),
+            Property(name="airtable_id", data_type=DataType.TEXT, index_searchable=True),
+        ],
+    )
+
+def ingest_airtable_to_weaviate(limit: int | None = None):
+    # --- clients ---
+    at = Table(
+        os.environ["AIRTABLE_API_KEY"],
+        os.environ["AIRTABLE_BASE_ID"],
+        os.environ["AIRTABLE_TABLE_NAME"],
+    )
+    wclient = weaviate.connect_to_weaviate_cloud(
+        cluster_url=os.environ["WEAVIATE_URL"],
+        auth_credentials=weaviate.Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
+        headers={"X-OpenAI-Api-Key": os.environ.get("OPENAI_API_KEY", "")},  # optional passthrough
+    )
+    oa = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    try:
+        coll = ensure_weaviate_collection(wclient, W_COLLECTION)
+
+        # Pull rows from Airtable (handles pagination)
+        count = 0
+        batch = []
+        for rec in at.iterate(page_size=50):
+            fields = rec.get("fields", {})
+            text = make_text(fields)
+            if not text:
+                continue
+
+            title = fields.get("Title") or fields.get("Name") or "(untitled)"
+            tags = fields.get("Tags") if isinstance(fields.get("Tags"), list) else []
+
+            # Create embedding
+            emb = oa.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding
+
+            batch.append({
+                "uuid": str(uuid4()),
+                "properties": {
+                    "title": title,
+                    "source": os.environ["AIRTABLE_TABLE_NAME"],
+                    "text": text,
+                    "tags": tags,
+                    "airtable_id": rec["id"],
+                },
+                "vector": emb,
+            })
+
+            # Write to Weaviate in small batches
+            if len(batch) >= 25:
+                coll.data.insert_many(batch)
+                count += len(batch)
+                batch = []
+                time.sleep(0.2)  # gentle pacing
+
+            if limit and count >= limit:
+                break
+
+        if batch:
+            coll.data.insert_many(batch)
+            count += len(batch)
+
+        return {"status": "ok", "ingested": count, "collection": W_COLLECTION}
+    finally:
+        wclient.close()
+
+# ---------- Streamlit button to run it ----------
+with st.sidebar:
+    st.markdown("### Weaviate Loader")
+    lim = st.number_input("Max rows to ingest (0 = all)", min_value=0, value=0, step=50)
+    if st.button("Ingest Airtable → Weaviate"):
+        n = None if lim == 0 else lim
+        with st.spinner("Embedding and loading to Weaviate…"):
+            res = ingest_airtable_to_weaviate(limit=n)
+        st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
+
+
