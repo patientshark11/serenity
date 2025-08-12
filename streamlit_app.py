@@ -21,7 +21,8 @@ from pyairtable import Table
 # -----------------------------
 # Page config FIRST + visual CSS
 # -----------------------------
-st.set_page_config(page_title="Serenity — Secure Chat", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Project Serenity: Documentation", page_icon="💬
+", layout="wide")
 
 st.markdown(
     """
@@ -376,3 +377,4 @@ with st.sidebar:
         "EMBED_MODEL": EMBED_MODEL,
         "WEAVIATE": getattr(weaviate, "__version__", "unknown"),
     })
+
