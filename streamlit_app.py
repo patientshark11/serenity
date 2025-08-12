@@ -21,7 +21,7 @@ from pyairtable import Table
 # -----------------------------
 # Page config FIRST + visual CSS
 # -----------------------------
-st.set_page_config(page_title="Project Serenity: Documentation", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Custody Documentation", page_icon="💬", layout="wide")
 
 st.markdown(
     """
@@ -33,15 +33,18 @@ st.markdown(
         --card: #f6f8fb;        /* light card */
         --border: #e5e7eb;      /* gray-200 */
       }
-      .block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1180px; }
+      .block-container { padding-top: 1.2rem; padding-bottom: 3.2rem; max-width: 1160px; }
       .serenity-hero {
-        text-align:center; padding: 26px 16px 10px; border-radius: 18px;
-        background: linear-gradient(90deg, #f8fafc 0%, #eef2ff 100%);
-        border: 1px solid var(--border); margin-bottom: 14px;
+        text-align:center; padding: 28px 18px 14px; border-radius: 20px;
+        background: linear-gradient(100deg, #f9fbff 0%, #eef2ff 100%);
+        border: 1px solid var(--border); margin: 8px 0 18px;
+        box-shadow: 0 6px 24px rgba(15,23,42,0.06);
       }
       .serenity-hero h1 { margin: 0; font-weight: 800; letter-spacing: .2px; }
-      .serenity-sub { color: var(--muted); margin-top: 6px; }
-      .serenity-card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 18px; }
+      .serenity-sub { color: var(--muted); margin-top: 8px; }
+      .section { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 18px;
+                 box-shadow: 0 2px 14px rgba(15,23,42,0.05); }
+      .section-spacer { height: 14px; }  /* vertical rhythm */
       .serenity-history button { width:100%; text-align:left; border-radius:12px !important;
         border:1px solid var(--border) !important; background:white !important; }
       .serenity-history button:hover { border-color: var(--brand) !important; }
@@ -68,6 +71,7 @@ AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "")
 AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE_NAME", "")
 
 QA_WEBHOOK_URL = os.environ.get("QA_WEBHOOK_URL", "")  # optional Zapier/Make webhook
+LOGO_PATH = os.environ.get("APP_LOGO_PATH", "logo.png")  # put your image in repo or set this env
 
 # No in-app password gate (Cloudflare Access is your auth wall)
 
@@ -116,8 +120,10 @@ def extract_file_urls(fields: dict) -> list[str]:
 
 def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
     # Safe for both object and string returns from list_all()
-    existing = [getattr(c, "name", c if isinstance(c, str) else str(c))
-                for c in client.collections.list_all()]
+    existing = [
+        getattr(c, "name", c if isinstance(c, str) else str(c))
+        for c in client.collections.list_all()
+    ]
     if name in existing:
         return client.collections.get(name)
     return client.collections.create(
@@ -273,12 +279,22 @@ def log_qna_webhook(question: str, answer: str, hits: list[dict]):
 # -----------------------------
 # UI
 # -----------------------------
-# Centered hero
+# Logo (optional) + hero
+if os.path.exists(LOGO_PATH):
+    st.markdown(
+        f"""
+        <div style="text-align:center; padding-top: 4px; margin-bottom: 6px;">
+          <img src="{LOGO_PATH}" style="height:60px; opacity:.98;">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 st.markdown(
     """
     <div class="serenity-hero">
-      <h1>Project Serenity: Documentation</h1>
-      <div class="serenity-sub">Ask questions about your records. Sources included automatically.</div>
+      <h1>Custody Documentation</h1>
+      <div class="serenity-sub">Private, authenticated workspace for your case records.</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -296,13 +312,13 @@ with st.sidebar:
             st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
 
 # Layout: left history / right chat
-left, right = st.columns([0.28, 0.72])
+left, right = st.columns([0.32, 0.68])
 
 if "history" not in st.session_state:
     st.session_state.history = []  # list of {q, a, hits}
 
 with left:
-    st.markdown("<div class='serenity-card'><h4 style='margin-top:0'>History</h4>", unsafe_allow_html=True)
+    st.markdown("<div class='section'><h4 style='margin-top:0'>History</h4>", unsafe_allow_html=True)
     with st.container():
         st.markdown("<div class='serenity-history'>", unsafe_allow_html=True)
         if not st.session_state.history:
@@ -315,9 +331,11 @@ with left:
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
+st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+
 with right:
-    st.markdown("<div class='serenity-card'>", unsafe_allow_html=True)
-    st.markdown("### Ask anything about your records", unsafe_allow_html=True)
+    st.markdown("<div class='section'>", unsafe_allow_html=True)
+    st.markdown("### Ask a question", unsafe_allow_html=True)
 
     default_text = st.session_state.pop("prefill", "")
     user_q = st.chat_input("Type your question…", key="chat_input")
@@ -378,4 +396,3 @@ with st.sidebar:
         "EMBED_MODEL": EMBED_MODEL,
         "WEAVIATE": getattr(weaviate, "__version__", "unknown"),
     })
-
