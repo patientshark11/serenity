@@ -18,9 +18,9 @@ from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.query import MetadataQuery
 from pyairtable import Table
 
-# -----------------------------
-# Page config FIRST + visual CSS
-# -----------------------------
+# =============================
+# Page config + global styles
+# =============================
 st.set_page_config(page_title="Custody Documentation", page_icon="💬", layout="wide")
 
 st.markdown(
@@ -30,21 +30,24 @@ st.markdown(
         --brand: #5865f2;       /* indigo/blue accent */
         --ink: #0f172a;         /* slate-900 */
         --muted: #475569;       /* slate-600 */
-        --card: #f6f8fb;        /* light card */
+        --card: #f7f9fc;        /* light card */
         --border: #e5e7eb;      /* gray-200 */
+      }
+      html, body {
+        background: linear-gradient(180deg, #ffffff 0%, #f7f9ff 45%, #f6f7ff 100%);
       }
       .block-container { padding-top: 1.2rem; padding-bottom: 3.2rem; max-width: 1160px; }
       .serenity-hero {
         text-align:center; padding: 28px 18px 14px; border-radius: 20px;
         background: linear-gradient(100deg, #f9fbff 0%, #eef2ff 100%);
         border: 1px solid var(--border); margin: 8px 0 18px;
-        box-shadow: 0 6px 24px rgba(15,23,42,0.06);
+        box-shadow: 0 8px 26px rgba(15,23,42,0.06);
       }
       .serenity-hero h1 { margin: 0; font-weight: 800; letter-spacing: .2px; }
       .serenity-sub { color: var(--muted); margin-top: 8px; }
       .section { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 18px;
                  box-shadow: 0 2px 14px rgba(15,23,42,0.05); }
-      .section-spacer { height: 14px; }  /* vertical rhythm */
+      .section-spacer { height: 16px; } /* vertical rhythm */
       .serenity-history button { width:100%; text-align:left; border-radius:12px !important;
         border:1px solid var(--border) !important; background:white !important; }
       .serenity-history button:hover { border-color: var(--brand) !important; }
@@ -55,29 +58,29 @@ st.markdown(
       .stTextInput>div>div>input, .stNumberInput>div>div>input { border-radius:12px; }
       .stButton>button { border-radius:12px; background:var(--brand); color:white; border:0; }
       .stButton>button:hover { filter: brightness(0.95); }
+      .tiny-muted { color: #64748b; font-size: 12px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# -----------------------------
+# =============================
 # Environment & constants
-# -----------------------------
+# =============================
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-large")
+
+# You can set WEAVIATE_COLLECTION=Records to match an existing title-cased collection
 W_COLLECTION = os.environ.get("WEAVIATE_COLLECTION", "records")
 
 AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "")
 AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE_NAME", "")
-
 QA_WEBHOOK_URL = os.environ.get("QA_WEBHOOK_URL", "")  # optional Zapier/Make webhook
 LOGO_PATH = os.environ.get("APP_LOGO_PATH", "logo.png")  # put your image in repo or set this env
 
-# No in-app password gate (Cloudflare Access is your auth wall)
-
-# -----------------------------
+# =============================
 # Clients
-# -----------------------------
+# =============================
 def get_clients():
     oa = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     wclient = connect_to_wcs(
@@ -86,9 +89,9 @@ def get_clients():
     )
     return oa, wclient
 
-# -----------------------------
-# Weaviate schema & ingest helpers
-# -----------------------------
+# =============================
+# Weaviate schema & ingest
+# =============================
 DEFAULT_TEXT_FIELDS = ["Title", "Notes", "Summary", "Body", "Description", "Content"]
 ATTACHMENT_FIELDS = ["Attachments", "Files", "File", "Links"]  # common Airtable names
 
@@ -119,25 +122,37 @@ def extract_file_urls(fields: dict) -> list[str]:
     return urls
 
 def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
-    # Safe for both object and string returns from list_all()
-    existing = [
-        getattr(c, "name", c if isinstance(c, str) else str(c))
-        for c in client.collections.list_all()
-    ]
-    if name in existing:
-        return client.collections.get(name)
-    return client.collections.create(
-        name=name,
-        vectorizer_config=Configure.Vectorizer.none(),  # we provide our own vectors
-        properties=[
-            Property(name="title", data_type=DataType.TEXT),
-            Property(name="source", data_type=DataType.TEXT),
-            Property(name="text", data_type=DataType.TEXT),
-            Property(name="tags", data_type=DataType.TEXT_ARRAY),
-            Property(name="file_urls", data_type=DataType.TEXT_ARRAY),
-            Property(name="airtable_id", data_type=DataType.TEXT, index_searchable=True),
-        ],
-    )
+    """Case-insensitive fetch/create; safe if collection already exists."""
+    def _coerce(x):
+        return getattr(x, "name", x if isinstance(x, str) else str(x))
+
+    existing_raw = client.collections.list_all()
+    existing = [_coerce(c) for c in existing_raw]
+    existing_map = {e.lower(): e for e in existing}
+
+    if name.lower() in existing_map:
+        # Use the actual server-side casing if it differs
+        return client.collections.get(existing_map[name.lower()])
+
+    try:
+        return client.collections.create(
+            name=name,
+            vectorizer_config=Configure.Vectorizer.none(),  # we provide vectors
+            properties=[
+                Property(name="title", data_type=DataType.TEXT),
+                Property(name="source", data_type=DataType.TEXT),
+                Property(name="text", data_type=DataType.TEXT),
+                Property(name="tags", data_type=DataType.TEXT_ARRAY),
+                Property(name="file_urls", data_type=DataType.TEXT_ARRAY),
+                Property(name="airtable_id", data_type=DataType.TEXT, index_searchable=True),
+            ],
+        )
+    except Exception as e:
+        # If another worker created it a moment ago or name casing mismatch, just get it
+        msg = (str(e) or "").lower()
+        if "already exists" in msg or "422" in msg:
+            return client.collections.get(name)
+        raise
 
 def _iter_records(table):
     # Handles both: dict-per-record or list-of-records per page
@@ -207,9 +222,9 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
     finally:
         wclient.close()
 
-# -----------------------------
+# =============================
 # Retrieval + answering
-# -----------------------------
+# =============================
 def weaviate_search(query: str, top_k: int = 5):
     _, wclient = get_clients()
     try:
@@ -276,9 +291,9 @@ def log_qna_webhook(question: str, answer: str, hits: list[dict]):
     except Exception:
         pass
 
-# -----------------------------
+# =============================
 # UI
-# -----------------------------
+# =============================
 # Logo (optional) + hero
 if os.path.exists(LOGO_PATH):
     st.markdown(
@@ -300,7 +315,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Sidebar Settings (gear) with sync controls (off the main page)
+# Sidebar Settings (gear) with sync controls
 with st.sidebar:
     with st.expander("⚙️ Settings", expanded=False):
         st.caption("Data sync (admin)")
@@ -355,7 +370,7 @@ with right:
             st.chat_message("assistant").write(answer)
             st.session_state.history.append({"q": user_q, "a": answer, "hits": []})
         else:
-            # Nicely styled source cards
+            # Source preview
             with st.expander("Sources (click to view)"):
                 for h in hits:
                     snippet = h["text"][:300] + ("…" if len(h["text"]) > 300 else "")
