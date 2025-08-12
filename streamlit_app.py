@@ -277,7 +277,7 @@ def log_qna_webhook(question: str, answer: str, hits: list[dict]):
 st.markdown(
     """
     <div class="serenity-hero">
-      <h1>Secure Chat</h1>
+      <h1>Project Serenity: Documentation</h1>
       <div class="serenity-sub">Ask questions about your records. Sources included automatically.</div>
     </div>
     """,
@@ -378,3 +378,4 @@ with st.sidebar:
         "EMBED_MODEL": EMBED_MODEL,
         "WEAVIATE": getattr(weaviate, "__version__", "unknown"),
     })
+
