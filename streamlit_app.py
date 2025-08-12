@@ -2,6 +2,7 @@
 import os
 import re
 import time
+import base64
 from datetime import datetime
 from uuid import uuid4
 from typing import List, Dict
@@ -16,6 +17,7 @@ from weaviate.auth import AuthApiKey
 import weaviate
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.query import MetadataQuery
+from weaviate.classes.data import DataObject
 from pyairtable import Table
 
 # =============================
@@ -27,27 +29,30 @@ st.markdown(
     """
     <style>
       :root {
-        --brand: #5865f2;       /* indigo/blue accent */
-        --ink: #0f172a;         /* slate-900 */
-        --muted: #475569;       /* slate-600 */
-        --card: #f7f9fc;        /* light card */
-        --border: #e5e7eb;      /* gray-200 */
+        --brand: #5865f2;
+        --ink: #0f172a;
+        --muted: #475569;
+        --card: #f7f9fc;
+        --border: #e5e7eb;
       }
       html, body {
         background: linear-gradient(180deg, #ffffff 0%, #f7f9ff 45%, #f6f7ff 100%);
       }
-      .block-container { padding-top: 1.2rem; padding-bottom: 3.2rem; max-width: 1160px; }
+      .block-container { padding-top: 1.0rem; padding-bottom: 3.2rem; max-width: 1180px; }
       .serenity-hero {
-        text-align:center; padding: 28px 18px 14px; border-radius: 20px;
+        text-align:center; padding: 32px 20px 18px; border-radius: 22px;
         background: linear-gradient(100deg, #f9fbff 0%, #eef2ff 100%);
-        border: 1px solid var(--border); margin: 8px 0 18px;
-        box-shadow: 0 8px 26px rgba(15,23,42,0.06);
+        border: 1px solid var(--border); margin: 10px 0 22px;
+        box-shadow: 0 10px 28px rgba(15,23,42,0.06);
       }
-      .serenity-hero h1 { margin: 0; font-weight: 800; letter-spacing: .2px; }
-      .serenity-sub { color: var(--muted); margin-top: 8px; }
-      .section { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 18px;
-                 box-shadow: 0 2px 14px rgba(15,23,42,0.05); }
-      .section-spacer { height: 16px; } /* vertical rhythm */
+      .serenity-hero h1 { margin: 0; font-weight: 800; letter-spacing: .2px; font-size: 46px; }
+      .serenity-sub { color: var(--muted); margin-top: 10px; font-size: 15px; }
+      .viewport-grid { display: grid; grid-template-columns: 0.34fr 0.66fr; gap: 18px; }
+      .section {
+        background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 18px 18px 12px;
+        box-shadow: 0 2px 14px rgba(15,23,42,0.05);
+      }
+      .section h4 { margin: 2px 0 10px; }
       .serenity-history button { width:100%; text-align:left; border-radius:12px !important;
         border:1px solid var(--border) !important; background:white !important; }
       .serenity-history button:hover { border-color: var(--brand) !important; }
@@ -59,6 +64,7 @@ st.markdown(
       .stButton>button { border-radius:12px; background:var(--brand); color:white; border:0; }
       .stButton>button:hover { filter: brightness(0.95); }
       .tiny-muted { color: #64748b; font-size: 12px; }
+      .chat-card { padding: 4px 6px 10px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -68,15 +74,15 @@ st.markdown(
 # Environment & constants
 # =============================
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
-EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-large")
+EMBED_MODEL  = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-large")
 
-# You can set WEAVIATE_COLLECTION=Records to match an existing title-cased collection
+# If the existing collection on your cluster is "Records", set this env to Records
 W_COLLECTION = os.environ.get("WEAVIATE_COLLECTION", "records")
 
-AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "")
+AIRTABLE_BASE_ID    = os.environ.get("AIRTABLE_BASE_ID", "")
 AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE_NAME", "")
-QA_WEBHOOK_URL = os.environ.get("QA_WEBHOOK_URL", "")  # optional Zapier/Make webhook
-LOGO_PATH = os.environ.get("APP_LOGO_PATH", "logo.png")  # put your image in repo or set this env
+QA_WEBHOOK_URL      = os.environ.get("QA_WEBHOOK_URL", "")  # optional Zapier/Make webhook
+LOGO_PATH           = os.environ.get("APP_LOGO_PATH", "logo.png")  # file in repo root by default
 
 # =============================
 # Clients
@@ -93,7 +99,7 @@ def get_clients():
 # Weaviate schema & ingest
 # =============================
 DEFAULT_TEXT_FIELDS = ["Title", "Notes", "Summary", "Body", "Description", "Content"]
-ATTACHMENT_FIELDS = ["Attachments", "Files", "File", "Links"]  # common Airtable names
+ATTACHMENT_FIELDS   = ["Attachments", "Files", "File", "Links"]  # common Airtable names
 
 def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
@@ -127,11 +133,10 @@ def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
         return getattr(x, "name", x if isinstance(x, str) else str(x))
 
     existing_raw = client.collections.list_all()
-    existing = [_coerce(c) for c in existing_raw]
+    existing     = [_coerce(c) for c in existing_raw]
     existing_map = {e.lower(): e for e in existing}
 
     if name.lower() in existing_map:
-        # Use the actual server-side casing if it differs
         return client.collections.get(existing_map[name.lower()])
 
     try:
@@ -139,16 +144,15 @@ def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
             name=name,
             vectorizer_config=Configure.Vectorizer.none(),  # we provide vectors
             properties=[
-                Property(name="title", data_type=DataType.TEXT),
-                Property(name="source", data_type=DataType.TEXT),
-                Property(name="text", data_type=DataType.TEXT),
-                Property(name="tags", data_type=DataType.TEXT_ARRAY),
-                Property(name="file_urls", data_type=DataType.TEXT_ARRAY),
+                Property(name="title",       data_type=DataType.TEXT),
+                Property(name="source",      data_type=DataType.TEXT),
+                Property(name="text",        data_type=DataType.TEXT),
+                Property(name="tags",        data_type=DataType.TEXT_ARRAY),
+                Property(name="file_urls",   data_type=DataType.TEXT_ARRAY),
                 Property(name="airtable_id", data_type=DataType.TEXT, index_searchable=True),
             ],
         )
     except Exception as e:
-        # If another worker created it a moment ago or name casing mismatch, just get it
         msg = (str(e) or "").lower()
         if "already exists" in msg or "422" in msg:
             return client.collections.get(name)
@@ -174,6 +178,7 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
     try:
         coll = ensure_weaviate_collection(wclient, W_COLLECTION)
         count, batch = 0, []
+
         for rec in _iter_records(at):
             if not isinstance(rec, dict):
                 continue
@@ -185,31 +190,34 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
             if not text:
                 continue
 
-            title = fields.get("Title") or fields.get("Name") or "(untitled)"
-            tags_raw = fields.get("Tags")
-            tags = [t for t in _as_list(tags_raw) if isinstance(t, str)]
+            title     = fields.get("Title") or fields.get("Name") or "(untitled)"
+            tags_raw  = fields.get("Tags")
+            tags      = [t for t in _as_list(tags_raw) if isinstance(t, str)]
             file_urls = extract_file_urls(fields)
 
             emb = oa.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding
 
-            batch.append({
-                "uuid": str(uuid4()),
-                "properties": {
-                    "title": title,
-                    "source": AIRTABLE_TABLE_NAME,
-                    "text": text,
-                    "tags": tags,
-                    "file_urls": file_urls,
-                    "airtable_id": rec.get("id"),
-                },
-                "vector": emb,
-            })
+            # v4-safe object (use vectors={"default": ...})
+            batch.append(
+                DataObject(
+                    uuid=str(uuid4()),
+                    properties={
+                        "title":       title,
+                        "source":      AIRTABLE_TABLE_NAME,
+                        "text":        text,
+                        "tags":        tags,
+                        "file_urls":   file_urls,
+                        "airtable_id": rec.get("id"),
+                    },
+                    vectors={"default": emb},
+                )
+            )
 
             if len(batch) >= 25:
                 coll.data.insert_many(batch)
                 count += len(batch)
                 batch = []
-                time.sleep(0.2)
+                time.sleep(0.15)
 
             if limit and count >= limit:
                 break
@@ -240,11 +248,11 @@ def weaviate_search(query: str, top_k: int = 5):
             props = o.properties or {}
             items.append({
                 "title": props.get("title") or "(untitled)",
-                "text": props.get("text") or "",
+                "text":  props.get("text")  or "",
                 "source": props.get("source"),
-                "tags": props.get("tags") or [],
+                "tags":   props.get("tags") or [],
                 "airtable_id": props.get("airtable_id"),
-                "file_urls": props.get("file_urls") or [],
+                "file_urls":   props.get("file_urls") or [],
                 "score": 1 - (o.metadata.distance or 0),
             })
         return items
@@ -283,8 +291,8 @@ def log_qna_webhook(question: str, answer: str, hits: list[dict]):
     payload = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "question": question,
-        "answer": answer,
-        "sources": hits,
+        "answer":   answer,
+        "sources":  hits,
     }
     try:
         requests.post(QA_WEBHOOK_URL, json=payload, timeout=6)
@@ -294,16 +302,25 @@ def log_qna_webhook(question: str, answer: str, hits: list[dict]):
 # =============================
 # UI
 # =============================
-# Logo (optional) + hero
-if os.path.exists(LOGO_PATH):
-    st.markdown(
-        f"""
-        <div style="text-align:center; padding-top: 4px; margin-bottom: 6px;">
-          <img src="{LOGO_PATH}" style="height:60px; opacity:.98;">
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+# Inline-logo helper (base64 embed so Render always shows it)
+def render_logo(path: str, height_px: int = 60):
+    try:
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            st.markdown(
+                f"""
+                <div style="text-align:center; padding-top: 2px; margin-bottom: 4px;">
+                  <img src="data:image/png;base64,{b64}" style="height:{height_px}px; opacity:.98;">
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        # silent fail if image missing or unreadable
+        pass
+
+render_logo(LOGO_PATH, 60)
 
 st.markdown(
     """
@@ -326,30 +343,28 @@ with st.sidebar:
                 res = ingest_airtable_to_weaviate(limit=n)
             st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
 
-# Layout: left history / right chat
-left, right = st.columns([0.32, 0.68])
+# Grid layout with comfortable gap
+st.markdown('<div class="viewport-grid">', unsafe_allow_html=True)
 
-if "history" not in st.session_state:
-    st.session_state.history = []  # list of {q, a, hits}
-
-with left:
-    st.markdown("<div class='section'><h4 style='margin-top:0'>History</h4>", unsafe_allow_html=True)
-    with st.container():
+# History (left)
+with st.container():
+    st.markdown("<div class='section'><h4>History</h4>", unsafe_allow_html=True)
+    if "history" not in st.session_state:
+        st.session_state.history = []
+    if not st.session_state.history:
+        st.caption("No questions yet.")
+    else:
         st.markdown("<div class='serenity-history'>", unsafe_allow_html=True)
-        if not st.session_state.history:
-            st.caption("No questions yet.")
-        else:
-            for i, item in enumerate(reversed(st.session_state.history[-20:])):
-                label = item["q"][:60] + ("…" if len(item["q"]) > 60 else "")
-                if st.button(label, key=f"hist_{i}"):
-                    st.session_state["prefill"] = item["q"]
+        for i, item in enumerate(reversed(st.session_state.history[-20:])):
+            label = item["q"][:60] + ("…" if len(item["q"]) > 60 else "")
+            if st.button(label, key=f"hist_{i}"):
+                st.session_state["prefill"] = item["q"]
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
-
-with right:
-    st.markdown("<div class='section'>", unsafe_allow_html=True)
+# Chat (right)
+with st.container():
+    st.markdown("<div class='section chat-card'>", unsafe_allow_html=True)
     st.markdown("### Ask a question", unsafe_allow_html=True)
 
     default_text = st.session_state.pop("prefill", "")
@@ -370,7 +385,6 @@ with right:
             st.chat_message("assistant").write(answer)
             st.session_state.history.append({"q": user_q, "a": answer, "hits": []})
         else:
-            # Source preview
             with st.expander("Sources (click to view)"):
                 for h in hits:
                     snippet = h["text"][:300] + ("…" if len(h["text"]) > 300 else "")
@@ -403,6 +417,8 @@ with right:
             log_qna_webhook(user_q, answer, hits)
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)  # end viewport-grid
 
 # Tiny debug footer
 with st.sidebar:
