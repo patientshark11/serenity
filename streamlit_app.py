@@ -21,8 +21,7 @@ from pyairtable import Table
 # -----------------------------
 # Page config FIRST + visual CSS
 # -----------------------------
-st.set_page_config(page_title="Project Serenity: Documentation", page_icon="💬
-", layout="wide")
+st.set_page_config(page_title="Project Serenity: Documentation", page_icon="💬", layout="wide")
 
 st.markdown(
     """
@@ -116,7 +115,9 @@ def extract_file_urls(fields: dict) -> list[str]:
     return urls
 
 def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
-    existing = [c.name for c in client.collections.list_all()]
+    # Safe for both object and string returns from list_all()
+    existing = [getattr(c, "name", c if isinstance(c, str) else str(c))
+                for c in client.collections.list_all()]
     if name in existing:
         return client.collections.get(name)
     return client.collections.create(
@@ -377,4 +378,3 @@ with st.sidebar:
         "EMBED_MODEL": EMBED_MODEL,
         "WEAVIATE": getattr(weaviate, "__version__", "unknown"),
     })
-
