@@ -55,71 +55,41 @@ def get_clients():
 DEFAULT_TEXT_FIELDS = ["Title", "Notes", "Summary", "Body", "Description", "Content"]
 ATTACHMENT_FIELDS = ["Attachments", "Files", "File", "Links"]  # Airtable common names
 
+def _iter_records(table):
+    # Handles both: dict-per-record or list-of-records per page
+    for page in table.iterate(page_size=50):
+        if isinstance(page, list):
+            for rec in page:
+                yield rec
+        else:
+            yield page
 
-def _clean(s: str) -> str:
-    return re.sub(r"\s+", " ", s or "").strip()
-
-
-def make_text(fields: dict) -> str:
-    parts = []
-    for key in DEFAULT_TEXT_FIELDS:
-        if key in fields and fields[key]:
-            parts.append(f"{key}: {fields[key]}")
-    if not parts:
-        parts = [f"{k}: {v}" for k, v in fields.items() if isinstance(v, str)]
-    return _clean("\n".join(parts))
-
-
-def extract_file_urls(fields: dict) -> list[str]:
-    urls: list[str] = []
-    for key in ATTACHMENT_FIELDS:
-        v = fields.get(key)
-        if isinstance(v, list):
-            for item in v:
-                if isinstance(item, dict) and item.get("url"):
-                    urls.append(item["url"])
-                elif isinstance(item, str) and item.startswith("http"):
-                    urls.append(item)
-        elif isinstance(v, str) and v.startswith("http"):
-            urls.append(v)
-    return urls
-
-
-def ensure_weaviate_collection(client: weaviate.WeaviateClient, name: str):
-    existing = [c.name for c in client.collections.list_all()]
-    if name in existing:
-        return client.collections.get(name)
-    return client.collections.create(
-        name=name,
-        vectorizer_config=Configure.Vectorizer.none(),  # we provide vectors
-        properties=[
-            Property(name="title", data_type=DataType.TEXT),
-            Property(name="source", data_type=DataType.TEXT),
-            Property(name="text", data_type=DataType.TEXT),
-            Property(name="tags", data_type=DataType.TEXT_ARRAY),
-            Property(name="file_urls", data_type=DataType.TEXT_ARRAY),
-            Property(name="airtable_id", data_type=DataType.TEXT, index_searchable=True),
-        ],
-    )
-
+def _as_list(x):
+    if x is None: return []
+    if isinstance(x, list): return x
+    return [x]
 
 def ingest_airtable_to_weaviate(limit: int | None = None):
-    at = Table(
-        os.environ["AIRTABLE_API_KEY"],
-        AIRTABLE_BASE_ID,
-        AIRTABLE_TABLE_NAME,
-    )
+    at = Table(os.environ["AIRTABLE_API_KEY"], AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME)
     oa, wclient = get_clients()
     try:
         coll = ensure_weaviate_collection(wclient, W_COLLECTION)
         count, batch = 0, []
-        for rec in at.iterate(page_size=50):
-            fields = rec.get("fields", {})
+        for rec in _iter_records(at):
+            if not isinstance(rec, dict):  # super defensive
+                continue
+            fields = rec.get("fields", {}) or {}
+            if not isinstance(fields, dict):
+                continue
+
             text = make_text(fields)
             if not text:
                 continue
+
             title = fields.get("Title") or fields.get("Name") or "(untitled)"
-            tags = fields.get("Tags") if isinstance(fields.get("Tags"), list) else []
+            tags_raw = fields.get("Tags")
+            # Tags may be a multi-select list OR a single string
+            tags = [t for t in _as_list(tags_raw) if isinstance(t, str)]
             file_urls = extract_file_urls(fields)
 
             emb = oa.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding
@@ -132,24 +102,28 @@ def ingest_airtable_to_weaviate(limit: int | None = None):
                     "text": text,
                     "tags": tags,
                     "file_urls": file_urls,
-                    "airtable_id": rec["id"],
+                    "airtable_id": rec.get("id"),
                 },
                 "vector": emb,
             })
 
             if len(batch) >= 25:
                 coll.data.insert_many(batch)
-                count += len(batch)
-                batch = []
+                count += len(batch); batch = []
                 time.sleep(0.2)
+
             if limit and count >= limit:
                 break
+
         if batch:
             coll.data.insert_many(batch)
             count += len(batch)
+
         return {"status": "ok", "ingested": count, "collection": W_COLLECTION}
     finally:
         wclient.close()
+
+
 
 # =========================
 #   Retrieval + Answering
@@ -229,7 +203,31 @@ def log_qna_webhook(question: str, answer: str, hits: list[dict]):
 # =========================
 #   Minimal Chat UI
 # =========================
-st.title("💬 Secure Chat")
+
+st.markdown("""
+<style>
+  .serenity-hero {
+    text-align:center;
+    padding: 26px 16px 10px;
+    border-radius: 18px;
+    background: linear-gradient(90deg, #f8fafc 0%, #eef2ff 100%);
+    border: 1px solid #e5e7eb;
+    margin-bottom: 14px;
+  }
+  .serenity-hero h1 {
+    margin: 0;
+    font-weight: 800;
+    letter-spacing: .2px;
+  }
+  .serenity-sub {
+    color:#475569; margin-top:6px;
+  }
+</style>
+<div class="serenity-hero">
+  <h1>Secure Chat</h1>
+  <div class="serenity-sub">Ask questions about your records. Sources included automatically.</div>
+</div>
+""", unsafe_allow_html=True)
 
 # Left column: history; Right: chat
 left, right = st.columns([0.28, 0.72])
@@ -246,15 +244,7 @@ with left:
             label = item["q"][:60] + ("…" if len(item["q"]) > 60 else "")
             if st.button(label, key=f"hist_{i}"):
                 st.session_state["prefill"] = item["q"]
-    st.divider()
-    st.subheader("Sync")
-    lim = st.number_input("Max rows to ingest (0 = all)", min_value=0, value=0, step=50)
-    if st.button("Sync Airtable → Weaviate"):
-        n = None if lim == 0 else lim
-        with st.spinner("Embedding and loading…"):
-            res = ingest_airtable_to_weaviate(limit=n)
-        st.success(f"Loaded {res['ingested']} records into `{res['collection']}`.")
-
+    
 with right:
     st.subheader("Ask anything about your records")
     default_text = st.session_state.pop("prefill", "")
@@ -274,9 +264,26 @@ with right:
             st.session_state.history.append({"q": user_q, "a": answer, "hits": []})
         else:
             # Show sources panel
-            with st.expander("Show sources"):
-                for h in hits:
-                    st.markdown(f"**{h['title']}**  •  score {h['score']:.2f}")
+           with st.expander("Sources (click to view)"):
+    for h in hits:
+        st.markdown(
+            f"""
+            <div style="background:#FFFFFF;border:1px solid #e5e7eb;border-radius:14px;padding:12px;margin-bottom:10px;">
+              <div style="font-weight:700; margin-bottom:6px;">{h['title']}</div>
+              <div style="color:#475569; font-size:0.94rem; line-height:1.4;">
+                { (h['text'][:300] + '…') if len(h['text'])>300 else h['text'] }
+              </div>
+              <div style="margin-top:8px;">
+                {"".join(f'<span class="chip">{t}</span>' for t in (h.get("tags") or [])[:4])}
+              </div>
+              <div style="margin-top:8px;">
+                {f'🔗 <a href="{airtable_record_url(AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME, h.get("airtable_id"))}" target="_blank">Airtable record</a>' if h.get("airtable_id") else ""}
+                {"".join(f' &nbsp; 📎 <a href="{u}" target="_blank">File</a>' for u in (h.get("file_urls") or [])[:4])}
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
                     st.write(h["text"][:1000] + ("…" if len(h["text"]) > 1000 else ""))
                     # Airtable record link
                     if AIRTABLE_BASE_ID and AIRTABLE_TABLE_NAME and h.get("airtable_id"):
@@ -302,3 +309,4 @@ with st.sidebar:
         "EMBED_MODEL": EMBED_MODEL,
         "WEAVIATE": getattr(weaviate, "__version__", "unknown"),
     })
+
