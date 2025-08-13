@@ -12,29 +12,23 @@ from requests.exceptions import HTTPError as AirtableHTTPError
 st.set_page_config(
     page_title="Project Serenity - Custody Q&A",
     page_icon="⚖️",
-    layout="wide",  # Use the wide layout for a more spacious feel
-    initial_sidebar_state="expanded" # Ensure the sidebar is open by default
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # --- 2. CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Custom Streamlit App styling */
     .stApp { background-color: #F0F2F6; }
     #MainMenu, footer, header { visibility: hidden; }
-    
-    /* Style the main container for the input form */
     .main-input-container {
-        padding: 20px;
-        border-radius: 10px;
-        background-color: #ffffff;
+        padding: 20px; border-radius: 10px; background-color: #ffffff;
         border: 1px solid #e0e0e0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-
-# --- 3. BACKEND LOGIC (No changes needed) ---
+# --- 3. BACKEND LOGIC ---
 def connect_to_services():
     if "clients_connected" in st.session_state: return True
     try:
@@ -46,8 +40,10 @@ def connect_to_services():
         st.error(f"Failed to connect to backend services. Please check credentials. Error: {e}")
         return False
 
+# --- **THE FIX IS HERE** ---
 def get_embedding(text):
-   model_name = os.environ.get("OPENAI_MODEL", "text-embedding-3-small")
+   # Now looking for the CORRECT environment variable name: OPENAI_EMBED_MODEL
+   model_name = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
    response = st.session_state.openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
    return response.data[0].embedding
 
@@ -75,77 +71,55 @@ def perform_search(query: str):
     results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
     return results[0]["answer"] if results else "I couldn't find a relevant answer in the documentation."
 
-# --- 4. DEFINITIVE UI LAYOUT ---
-
-# --- Sidebar ---
+# --- 4. UI LAYOUT ---
 with st.sidebar:
     logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
     st.image(logo_path, width=150)
     st.title("Controls & History")
-    
     if st.button("🔄 Sync Data from Airtable", use_container_width=True):
         with st.spinner("Connecting to Airtable and syncing data..."):
             try:
                 ingest_airtable_to_weaviate()
             except WeaviateConnectionError as e: st.error(f"Weaviate Error: {e}")
             except AirtableHTTPError as e: st.error(f"Airtable Error: {e}. Check PAT/Base/Table details.")
-            except OpenAI_APIError as e: st.error(f"OpenAI Error: {e.message}. Check billing.")
+            except OpenAI_APIError as e: st.error(f"OpenAI Error: {e.message}. Check billing/tier.")
             except Exception as e: st.error(f"An unexpected error occurred: {e}")
-    
     st.divider()
-    
     st.header("Chat History")
-    # Display history in a simple, clean format
     if "messages" in st.session_state and st.session_state.messages:
         for msg in st.session_state.messages:
-            if msg["role"] == "user":
-                st.markdown(f"**You:** {msg['content']}")
+            if msg["role"] == "user": st.markdown(f"**You:** {msg['content']}")
             elif msg["role"] == "assistant":
                  st.markdown(f"**Answer:** {msg['content']}")
-                 st.divider() # Separator after each answer
+                 st.divider()
     else:
         st.info("Your conversation history will appear here.")
 
-
-# --- Main Content Area ---
 st.title("Custody Documentation Q&A")
 st.markdown("Private, authenticated workspace for your case records.")
 
-# Initialize session state for messages if it doesn't exist
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Check for credentials and connections before rendering the main app
+if "messages" not in st.session_state: st.session_state.messages = []
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY"]) or not connect_to_services():
-    st.error("Application is not configured correctly. Please check all environment variables in Render and ensure services are reachable.")
+    st.error("Application is not configured correctly. Check environment variables and service reachability.")
 else:
-    # --- Prominent Input Form ---
     with st.container(border=True):
         user_query = st.text_area("Ask a question about your documentation:", height=120, placeholder="e.g., What are the standard holiday schedules?")
-        
         if st.button("Get Answer", type="primary", use_container_width=True):
             if user_query:
                 with st.spinner("Searching..."):
                     try:
                         bot_response = perform_search(user_query)
-                        # Add user query and bot response to the history
                         st.session_state.messages.append({"role": "user", "content": user_query})
                         st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                        # Rerun to update the display immediately
                         st.rerun()
-                    except OpenAI_APIError as e: st.error(f"OpenAI Error: {e.message}. Check billing.")
+                    except OpenAI_APIError as e: st.error(f"OpenAI Error: {e.message}. Check billing/tier.")
                     except Exception as e: st.error(f"An unexpected error occurred: {e}")
             else:
                 st.warning("Please enter a question.")
-
     st.markdown("---")
-
-    # --- Conversation Display ---
     st.header("Conversation")
-    if not st.session_state.messages:
-        st.info("Your current conversation will be displayed here.")
+    if not st.session_state.messages: st.info("Your current conversation will be displayed here.")
     else:
-        # Display the full conversation using clean chat messages
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
