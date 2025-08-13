@@ -4,15 +4,14 @@ import weaviate
 import openai
 from pyairtable import Table
 import uuid
-# ** THE FIX IS HERE **
-# We now import the correctly named exception class directly.
+# This is the corrected import statement.
 from weaviate.exceptions import WeaviateConnectionError
 from openai import APIError as OpenAI_APIError
 from requests.exceptions import HTTPError as AirtableHTTPError
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Project Serenity - Custody Q&A",
+    page_title="Project Serenity - Custody Q&A v2", # Added v2 for confirmation
     page_icon="⚖️",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -84,11 +83,12 @@ if "messages" not in st.session_state: st.session_state.messages = []
 
 logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
 st.image(logo_path, width=150)
-st.title("Custody Documentation Q&A")
+st.title("Custody Documentation Q&A v2") # Added v2 for confirmation
 st.markdown("Private, authenticated workspace for your case records.")
 st.divider()
 
 if all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY"]) and connect_to_services():
+    # ... (The rest of the UI code is identical to the last version) ...
     with st.container(border=True):
         st.markdown("##### Ask a question")
         user_query = st.text_area("Type your question here...", key="user_input_area", height=100)
@@ -129,14 +129,12 @@ if all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTAB
         with st.spinner("Connecting to Airtable and syncing data..."):
             try:
                 ingest_airtable_to_weaviate()
-            # ** THE FIX IS HERE **
-            # We now catch the correctly imported exception.
             except WeaviateConnectionError as e:
                 st.error(f"Weaviate Error: {e}")
             except AirtableHTTPError as e:
-                st.error(f"Airtable Error: {e}. Please check your Airtable API Key, Base ID, and Table Name in Render.")
+                st.error(f"Airtable Error: {e}. Please check your Airtable PAT and Base/Table details.")
             except OpenAI_APIError as e:
-                st.error(f"OpenAI Error: {e.message}. Please check your billing status on the OpenAI website.")
+                st.error(f"OpenAI Error: {e.message}. Please check your billing status.")
             except Exception as e:
                 st.error(f"An unexpected error occurred during sync: {e}")
 else:
