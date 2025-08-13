@@ -4,7 +4,9 @@ import weaviate
 import openai
 from pyairtable import Table
 import uuid
-from weaviate.exceptions import ConnectionError as WeaviateConnectionError
+# ** THE FIX IS HERE **
+# We now import the correctly named exception class directly.
+from weaviate.exceptions import WeaviateConnectionError
 from openai import APIError as OpenAI_APIError
 from requests.exceptions import HTTPError as AirtableHTTPError
 
@@ -29,7 +31,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. BACKEND LOGIC ---
-# Using st.session_state to hold clients after first successful connection
 def connect_to_services():
     if "clients_connected" in st.session_state:
         return True
@@ -87,7 +88,6 @@ st.title("Custody Documentation Q&A")
 st.markdown("Private, authenticated workspace for your case records.")
 st.divider()
 
-# Only show main app if secrets and connections are valid
 if all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY"]) and connect_to_services():
     with st.container(border=True):
         st.markdown("##### Ask a question")
@@ -114,4 +114,30 @@ if all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTAB
                 st.markdown(message["content"])
         st.divider()
 
-    st.m
+    st.markdown("#### Full History")
+    st.markdown('<div class="history-container">', unsafe_allow_html=True)
+    if st.session_state.messages:
+        for msg in reversed(st.session_state.messages):
+            if msg["role"] == "user": st.markdown(f"**You:** {msg['content']}")
+            else: st.markdown(f"**Answer:** {msg['content']}")
+            st.markdown("---")
+    else:
+        st.info("Your chat history will appear here.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if st.button("🔄 Sync Data from Airtable"):
+        with st.spinner("Connecting to Airtable and syncing data..."):
+            try:
+                ingest_airtable_to_weaviate()
+            # ** THE FIX IS HERE **
+            # We now catch the correctly imported exception.
+            except WeaviateConnectionError as e:
+                st.error(f"Weaviate Error: {e}")
+            except AirtableHTTPError as e:
+                st.error(f"Airtable Error: {e}. Please check your Airtable API Key, Base ID, and Table Name in Render.")
+            except OpenAI_APIError as e:
+                st.error(f"OpenAI Error: {e.message}. Please check your billing status on the OpenAI website.")
+            except Exception as e:
+                st.error(f"An unexpected error occurred during sync: {e}")
+else:
+    st.error("Application is not configured correctly. Please check environment variables and ensure all services are reachable.")
