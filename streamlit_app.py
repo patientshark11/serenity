@@ -4,42 +4,41 @@ import weaviate
 import openai
 from pyairtable import Table
 import uuid
-# This is the corrected import statement.
 from weaviate.exceptions import WeaviateConnectionError
 from openai import APIError as OpenAI_APIError
 from requests.exceptions import HTTPError as AirtableHTTPError
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Project Serenity - Custody Q&A v2", # Added v2 for confirmation
+    page_title="Project Serenity - Custody Q&A",
     page_icon="⚖️",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+    layout="wide",  # Use the wide layout for a more spacious feel
+    initial_sidebar_state="expanded" # Ensure the sidebar is open by default
 )
 
 # --- 2. CUSTOM CSS ---
 st.markdown("""
 <style>
+    /* Custom Streamlit App styling */
     .stApp { background-color: #F0F2F6; }
     #MainMenu, footer, header { visibility: hidden; }
-    .history-container {
-        height: 300px; overflow-y: auto; padding: 15px; border: 1px solid #e0e0e0;
-        border-radius: 10px; background-color: #ffffff;
+    
+    /* Style the main container for the input form */
+    .main-input-container {
+        padding: 20px;
+        border-radius: 10px;
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. BACKEND LOGIC ---
+
+# --- 3. BACKEND LOGIC (No changes needed) ---
 def connect_to_services():
-    if "clients_connected" in st.session_state:
-        return True
-    
+    if "clients_connected" in st.session_state: return True
     try:
-        st.session_state.weaviate_client = weaviate.Client(
-            url=os.environ.get("WEAVIATE_URL"),
-            auth_client_secret=weaviate.AuthApiKey(api_key=os.environ.get("WEAVIATE_API_KEY")),
-            additional_headers={"X-OpenAI-Api-Key": os.environ.get("OPENAI_API_KEY")}
-        )
+        st.session_state.weaviate_client = weaviate.Client(url=os.environ.get("WEAVIATE_URL"), auth_client_secret=weaviate.AuthApiKey(api_key=os.environ.get("WEAVIATE_API_KEY")), additional_headers={"X-OpenAI-Api-Key": os.environ.get("OPENAI_API_KEY")})
         st.session_state.openai_client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         st.session_state.clients_connected = True
         return True
@@ -49,8 +48,7 @@ def connect_to_services():
 
 def get_embedding(text):
    model_name = os.environ.get("OPENAI_MODEL", "text-embedding-3-small")
-   text = text.replace("\n", " ")
-   response = st.session_state.openai_client.embeddings.create(input=[text], model=model_name)
+   response = st.session_state.openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
    return response.data[0].embedding
 
 def ingest_airtable_to_weaviate():
@@ -73,69 +71,81 @@ def ingest_airtable_to_weaviate():
 
 def perform_search(query: str):
     query_vector = get_embedding(query)
-    response = (st.session_state.weaviate_client.query.get("CustodyDocs", ["question", "answer"])
-                .with_near_vector({"vector": query_vector}).with_limit(1).do())
+    response = (st.session_state.weaviate_client.query.get("CustodyDocs", ["question", "answer"]).with_near_vector({"vector": query_vector}).with_limit(1).do())
     results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
     return results[0]["answer"] if results else "I couldn't find a relevant answer in the documentation."
 
-# --- 4. UI LAYOUT ---
-if "messages" not in st.session_state: st.session_state.messages = []
+# --- 4. DEFINITIVE UI LAYOUT ---
 
-logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
-st.image(logo_path, width=150)
-st.title("Custody Documentation Q&A v2") # Added v2 for confirmation
+# --- Sidebar ---
+with st.sidebar:
+    logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
+    st.image(logo_path, width=150)
+    st.title("Controls & History")
+    
+    if st.button("🔄 Sync Data from Airtable", use_container_width=True):
+        with st.spinner("Connecting to Airtable and syncing data..."):
+            try:
+                ingest_airtable_to_weaviate()
+            except WeaviateConnectionError as e: st.error(f"Weaviate Error: {e}")
+            except AirtableHTTPError as e: st.error(f"Airtable Error: {e}. Check PAT/Base/Table details.")
+            except OpenAI_APIError as e: st.error(f"OpenAI Error: {e.message}. Check billing.")
+            except Exception as e: st.error(f"An unexpected error occurred: {e}")
+    
+    st.divider()
+    
+    st.header("Chat History")
+    # Display history in a simple, clean format
+    if "messages" in st.session_state and st.session_state.messages:
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                st.markdown(f"**You:** {msg['content']}")
+            elif msg["role"] == "assistant":
+                 st.markdown(f"**Answer:** {msg['content']}")
+                 st.divider() # Separator after each answer
+    else:
+        st.info("Your conversation history will appear here.")
+
+
+# --- Main Content Area ---
+st.title("Custody Documentation Q&A")
 st.markdown("Private, authenticated workspace for your case records.")
-st.divider()
 
-if all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY"]) and connect_to_services():
-    # ... (The rest of the UI code is identical to the last version) ...
+# Initialize session state for messages if it doesn't exist
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Check for credentials and connections before rendering the main app
+if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY"]) or not connect_to_services():
+    st.error("Application is not configured correctly. Please check all environment variables in Render and ensure services are reachable.")
+else:
+    # --- Prominent Input Form ---
     with st.container(border=True):
-        st.markdown("##### Ask a question")
-        user_query = st.text_area("Type your question here...", key="user_input_area", height=100)
+        user_query = st.text_area("Ask a question about your documentation:", height=120, placeholder="e.g., What are the standard holiday schedules?")
         
-        if st.button("Get Answer", type="primary"):
+        if st.button("Get Answer", type="primary", use_container_width=True):
             if user_query:
                 with st.spinner("Searching..."):
                     try:
                         bot_response = perform_search(user_query)
+                        # Add user query and bot response to the history
                         st.session_state.messages.append({"role": "user", "content": user_query})
                         st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                    except OpenAI_APIError as e:
-                        st.error(f"OpenAI Error: {e.message}. Please check your billing status on the OpenAI website.")
-                    except Exception as e:
-                        st.error(f"An unexpected error occurred: {e}")
+                        # Rerun to update the display immediately
+                        st.rerun()
+                    except OpenAI_APIError as e: st.error(f"OpenAI Error: {e.message}. Check billing.")
+                    except Exception as e: st.error(f"An unexpected error occurred: {e}")
             else:
                 st.warning("Please enter a question.")
 
-    if st.session_state.messages:
-        st.markdown("#### Conversation")
+    st.markdown("---")
+
+    # --- Conversation Display ---
+    st.header("Conversation")
+    if not st.session_state.messages:
+        st.info("Your current conversation will be displayed here.")
+    else:
+        # Display the full conversation using clean chat messages
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-        st.divider()
-
-    st.markdown("#### Full History")
-    st.markdown('<div class="history-container">', unsafe_allow_html=True)
-    if st.session_state.messages:
-        for msg in reversed(st.session_state.messages):
-            if msg["role"] == "user": st.markdown(f"**You:** {msg['content']}")
-            else: st.markdown(f"**Answer:** {msg['content']}")
-            st.markdown("---")
-    else:
-        st.info("Your chat history will appear here.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if st.button("🔄 Sync Data from Airtable"):
-        with st.spinner("Connecting to Airtable and syncing data..."):
-            try:
-                ingest_airtable_to_weaviate()
-            except WeaviateConnectionError as e:
-                st.error(f"Weaviate Error: {e}")
-            except AirtableHTTPError as e:
-                st.error(f"Airtable Error: {e}. Please check your Airtable PAT and Base/Table details.")
-            except OpenAI_APIError as e:
-                st.error(f"OpenAI Error: {e.message}. Please check your billing status.")
-            except Exception as e:
-                st.error(f"An unexpected error occurred during sync: {e}")
-else:
-    st.error("Application is not configured correctly. Please check environment variables and ensure all services are reachable.")
