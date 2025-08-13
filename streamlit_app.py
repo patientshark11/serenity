@@ -1,5 +1,5 @@
 import streamlit as st
-import os  # Using the 'os' library, which we've proven works
+import os
 import weaviate
 import openai
 from pyairtable import Table
@@ -22,16 +22,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- 3. CHECK SECRETS & INITIALIZE CLIENTS (Using os.environ) ---
+# --- 3. CHECK SECRETS & INITIALIZE CLIENTS ---
 def check_secrets():
-    required_keys = [
-        "WEAVIATE_URL", "WEAVIATE_API_KEY", "OPENAI_API_KEY",
-        "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"
-    ]
+    required_keys = ["WEAVIATE_URL", "WEAVIATE_API_KEY", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]
     if not all(os.environ.get(key) for key in required_keys):
         st.error("ERROR: One or more required environment variables are missing. Please check your Render dashboard.")
         st.stop()
-
 check_secrets()
 
 @st.cache_resource
@@ -50,7 +46,7 @@ try:
     weaviate_client = get_weaviate_client()
     openai_client = get_openai_client()
 except Exception as e:
-    st.error(f"Failed to initialize API clients. Please check your credentials. Error: {e}")
+    st.error(f"Failed to initialize API clients. Error: {e}")
     st.stop()
 
 
@@ -66,9 +62,7 @@ def ingest_airtable_to_weaviate():
     class_name = "CustodyDocs"
     if weaviate_client.schema.exists(class_name):
         weaviate_client.schema.delete_class(class_name)
-    class_obj = {"class": class_name, "vectorizer": "none", "properties": [
-        {"name": "question", "dataType": ["text"]}, {"name": "answer", "dataType": ["text"]},
-    ]}
+    class_obj = {"class": class_name, "vectorizer": "none", "properties": [{"name": "question", "dataType": ["text"]}, {"name": "answer", "dataType": ["text"]}]}
     weaviate_client.schema.create_class(class_obj)
     table = Table(os.environ.get("AIRTABLE_API_KEY"), os.environ.get("AIRTABLE_BASE_ID"), os.environ.get("AIRTABLE_TABLE_NAME"))
     records = table.all()
@@ -80,57 +74,64 @@ def ingest_airtable_to_weaviate():
                 emb = get_embedding(question_text)
                 data_obj = {"question": question_text, "answer": item.get("fields", {}).get("Answer", "")}
                 batch.add_data_object(data_object=data_obj, class_name=class_name, uuid=str(uuid.uuid4()), vector=emb)
-    st.toast("Data ingestion complete!", icon="✅")
+    st.toast("Data sync complete!", icon="✅")
 
 def perform_search(query: str):
     query_vector = get_embedding(query)
     response = (weaviate_client.query.get("CustodyDocs", ["question", "answer"])
                 .with_near_vector({"vector": query_vector}).with_limit(1).do())
     results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
-    return results[0]["answer"] if results else "I couldn't find a relevant answer. Please rephrase."
+    return results[0]["answer"] if results else "I couldn't find a relevant answer in the documentation. Please try rephrasing your question."
 
 # --- 5. STREAMLIT UI LAYOUT ---
 with st.sidebar:
     logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
-    try:
-        st.image(logo_path, width=150)
-    except Exception:
-        st.warning(f"Could not find logo at path: {logo_path}")
-
+    st.image(logo_path, width=150)
     st.markdown("## Chat History")
+    
+    # UI FIX 1: History is now always visible, no expander
     if "history" in st.session_state and st.session_state.history:
         for q, a in st.session_state.history:
-            with st.expander(f"Q: {q[:30]}..."):
-                st.markdown(f"**You:** {q}")
-                st.markdown(f"**Bot:** {a}")
+            st.markdown(f"**You:** {q}")
+            st.markdown(f"**Bot:** {a}")
+            st.divider() # Adds a nice separator
     else:
         st.info("Your chat history will appear here.")
+    
     if st.button("🔄 Sync Data from Airtable"):
         with st.spinner("Ingesting data..."):
             ingest_airtable_to_weaviate()
 
 with st.container(border=True):
-    st.title("Custody Documentation Q&A")
+    st.title("⚖️ Custody Documentation Q&A")
     st.markdown("Private, authenticated workspace for your case records.")
 st.markdown("<br>", unsafe_allow_html=True)
 
+# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "history" not in st.session_state:
-    st.session_state.history = []
+    # UI FIX 2: Add a welcome message to fill the empty space
+    st.session_state.messages.append({"role": "assistant", "content": "Hello! I'm here to help with your custody documentation. Ask me a question to get started."})
 
+# Display chat messages
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
+    # UI FIX 3: Use more professional avatars
+    avatar_icon = "👤" if message["role"] == "user" else "📚"
+    with st.chat_message(message["role"], avatar=avatar_icon):
         st.markdown(message["content"])
 
+# Chat input
 if prompt := st.chat_input("Ask a question..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
-    with st.chat_message("assistant"):
+
+    with st.chat_message("assistant", avatar="📚"):
         with st.spinner("Searching..."):
             response = perform_search(prompt)
             st.markdown(response)
+    
     st.session_state.messages.append({"role": "assistant", "content": response})
+    if 'history' not in st.session_state: st.session_state.history = []
     st.session_state.history.append((prompt, response))
     st.rerun()
