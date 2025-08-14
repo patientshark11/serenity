@@ -82,19 +82,9 @@ def perform_search(query: str):
 with st.sidebar:
     logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
     st.image(logo_path, width=150)
-    st.title("Controls & History")
-    
-    if st.button("🔄 Sync Data from Airtable", use_container_width=True):
-        with st.spinner("Syncing data... This may take a moment."):
-            try:
-                ingest_airtable_to_weaviate()
-            except Exception as e:
-                st.error(f"Sync failed: {e}")
-    
-    st.divider()
-    
-    st.header("Chat History")
-    if "messages" in st.session_state and st.session_state.messages:
+    st.title("Chat History")
+
+   if "messages" in st.session_state and st.session_state.messages:
         for msg in st.session_state.messages:
             if msg["role"] == "user":
                 st.markdown(f"**You:** {msg['content']}")
@@ -103,10 +93,20 @@ with st.sidebar:
                  st.divider()
     else:
         st.info("Your history will appear here.")
+    
+    st.divider()
+    
+    st.header("Data Controls")
+    if st.button("🔄 Sync Data from Airtable", use_container_width=True):
+        with st.spinner("Syncing data... This may take a moment."):
+            try:
+                ingest_airtable_to_weaviate()
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
 
 
 # --- Main Chat Interface ---
-st.title("Project Serenity Q&A")
+st.title("Custody Documentation Q&A")
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -136,3 +136,4 @@ else:
         
         # Add assistant response to state
         st.session_state.messages.append({"role": "assistant", "content": response})
+
