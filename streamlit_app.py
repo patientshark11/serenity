@@ -81,7 +81,7 @@ with st.sidebar:
             step=100,
             help="Controls how much text the AI looks at once. Smaller chunks are faster but might miss some context. Larger chunks are more detailed but can be slower. Default: 2000"
         )
-        models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+        models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "GPT-5 (Not Yet Available)"]
         if st.session_state.settings["openai_model"] not in models:
             st.session_state.settings["openai_model"] = models[0]
 
@@ -98,6 +98,10 @@ with st.sidebar:
             step=1,
             help="The number of text chunks to use as context for the answer. More sources can provide more detail but may increase processing time."
         )
+
+    model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
+    if model_is_unavailable:
+        st.warning("GPT-5 is not yet released. Please select an available model to enable application features.")
 
     # Manual sync at the bottom
     st.divider()
@@ -152,7 +156,7 @@ else:
     user_avatar = "https://ui-avatars.com/api/?name=Question&background=F0F2F6&color=0F172A"
     assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
 
-    if prompt := st.chat_input("Ask a question about your documentation..."):
+    if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar=user_avatar):
             st.write(prompt)
@@ -197,7 +201,7 @@ tab1, tab2, tab3 = st.tabs(["📅 Timeline", "👤 Person Summary", "📄 Report
 assistant_avatar_analysis = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
 
 with tab1:
-    if st.button("Generate Timeline of All Events", use_container_width=True):
+    if st.button("Generate Timeline of All Events", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend():
             with st.chat_message("assistant", avatar=assistant_avatar_analysis):
                 with st.spinner("Generating timeline..."):
@@ -219,8 +223,8 @@ with tab1:
                     st.rerun()
 
 with tab2:
-    entity_name = st.text_input("Enter a name to summarize:", key="entity_input_main")
-    if st.button("Summarize Person", use_container_width=True):
+    entity_name = st.text_input("Enter a name to summarize:", key="entity_input_main", disabled=model_is_unavailable)
+    if st.button("Summarize Person", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend() and entity_name:
             with st.chat_message("assistant", avatar=assistant_avatar_analysis):
                 with st.spinner(f"Summarizing {entity_name}..."):
@@ -246,9 +250,10 @@ with tab3:
     report_type = st.selectbox(
         "Select a report to generate:",
         ["", "Conflict Report", "Legal Communication Summary"],
-        key="report_select_main"
+        key="report_select_main",
+        disabled=model_is_unavailable
     )
-    if st.button("Generate Full Report", use_container_width=True):
+    if st.button("Generate Full Report", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend() and report_type:
             with st.chat_message("assistant", avatar=assistant_avatar_analysis):
                 with st.spinner(f"Generating {report_type}..."):
