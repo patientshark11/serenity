@@ -27,6 +27,14 @@ def get_or_create_session_state():
         st.session_state.weaviate_client = None
     if "openai_client" not in st.session_state:
         st.session_state.openai_client = None
+    # Add settings to session state
+    if "settings" not in st.session_state:
+        st.session_state.settings = {
+            "chunk_size": 2000,
+            "openai_model": "gpt-4"
+        }
+    if "initial_sync_done" not in st.session_state:
+        st.session_state.initial_sync_done = False
 
 get_or_create_session_state()
 
@@ -63,12 +71,32 @@ with st.sidebar:
 
     st.divider()
 
-    st.header("Data Controls")
-    if st.button("🔄 Sync Data from Airtable", use_container_width=True):
+    with st.expander("⚙️ Settings"):
+        st.session_state.settings["chunk_size"] = st.slider(
+            "Context Chunk Size",
+            min_value=500, max_value=4000,
+            value=st.session_state.settings["chunk_size"],
+            step=100,
+            help="Controls how much text the AI looks at once. Smaller chunks are faster but might miss some context. Larger chunks are more detailed but can be slower. Default: 2000"
+        )
+        st.session_state.settings["openai_model"] = st.selectbox(
+            "OpenAI Model",
+            ["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"],
+            index=["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"].index(st.session_state.settings["openai_model"]),
+            help="The AI model used for generating answers and reports. GPT-4 is more powerful but slower and more expensive."
+        )
+
+    # Move manual sync to the bottom as a fallback
+    st.divider()
+    if st.button("🔄 Force Data Re-Sync", use_container_width=True):
         if connect_to_backend():
             with st.spinner("Syncing data... This may take a moment."):
                 try:
-                    backend.ingest_airtable_to_weaviate(st.session_state.weaviate_client, st.session_state.openai_client)
+                    backend.ingest_airtable_to_weaviate(
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        chunk_size=st.session_state.settings["chunk_size"]
+                    )
                     st.toast("Data sync complete!", icon="✅")
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
@@ -76,18 +104,39 @@ with st.sidebar:
     st.header("Analysis Tools")
     if st.button("📅 Generate Timeline", use_container_width=True):
         if connect_to_backend():
-            with st.spinner("Generating timeline..."):
-                timeline = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client)
-                st.session_state.messages.append({"role": "assistant", "content": timeline, "summary": "Generated a timeline of events."})
-                st.rerun()
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner("Generating timeline..."):
+                    response = backend.generate_timeline(
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+                    st.rerun()
 
     entity_name = st.text_input("Enter a name to summarize:", key="entity_input")
     if st.button("👤 Summarize Person", use_container_width=True):
         if connect_to_backend() and entity_name:
-            with st.spinner(f"Summarizing {entity_name}..."):
-                summary = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client)
-                st.session_state.messages.append({"role": "assistant", "content": summary, "summary": f"Generated a summary for {entity_name}."})
-                st.rerun()
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner(f"Summarizing {entity_name}..."):
+                    response = backend.summarize_entity(
+                        entity_name,
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+                    st.rerun()
 
     st.divider()
     report_type = st.selectbox(
@@ -97,10 +146,21 @@ with st.sidebar:
     )
     if st.button("📄 Generate Report", use_container_width=True):
         if connect_to_backend() and report_type:
-            with st.spinner(f"Generating {report_type}..."):
-                report = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client)
-                st.session_state.messages.append({"role": "assistant", "content": report, "summary": f"Generated a {report_type}."})
-                st.rerun()
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner(f"Generating {report_type}..."):
+                    response = backend.generate_report(
+                        report_type,
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+                    st.rerun()
 
 # --- Main Chat Interface ---
 st.title("Custody Documentation Q&A")
@@ -121,6 +181,21 @@ if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AI
 elif not connect_to_backend():
     st.warning("Could not connect to backend services. Please check your configuration and network.")
 else:
+    # Perform initial sync if it hasn't been done this session
+    if not st.session_state.initial_sync_done:
+        with st.spinner("Performing initial data sync... This may take a moment."):
+            try:
+                backend.ingest_airtable_to_weaviate(
+                    st.session_state.weaviate_client,
+                    st.session_state.openai_client,
+                    chunk_size=st.session_state.settings["chunk_size"]
+                )
+                st.session_state.initial_sync_done = True
+                st.toast("Initial data sync complete!", icon="✅")
+                st.rerun() # Rerun to clear the spinner and show the main UI
+            except Exception as e:
+                st.error(f"Initial sync failed: {e}")
+
     if prompt := st.chat_input("Ask a question about your documentation..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="👧"):
@@ -128,14 +203,21 @@ else:
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Searching..."):
-                response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client)
-                st.write(response)
+                response_stream, sources, summary = backend.generative_search(
+                    prompt,
+                    st.session_state.weaviate_client,
+                    st.session_state.openai_client,
+                    model=st.session_state.settings["openai_model"]
+                )
+                # Use st.write_stream to render the streaming response
+                full_response = st.write_stream(response_stream)
                 if sources:
                     st.caption("Sources:")
                     for i, source_url in enumerate(sources):
                         st.markdown(f"- [Source {i+1}]({source_url})")
 
-        message = {"role": "assistant", "content": response, "summary": summary}
+        # Save the complete message to the session state once the stream is finished
+        message = {"role": "assistant", "content": full_response, "summary": summary}
         if sources:
             message["sources"] = sources
         st.session_state.messages.append(message)
