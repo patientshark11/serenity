@@ -103,7 +103,7 @@ with st.sidebar:
                     else:
                         full_response = st.write_stream(response)
                     pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button("Export Timeline as PDF", pdf_bytes, "timeline.pdf", "application/pdf")
+                    st.download_button("Export Timeline as PDF", bytes(pdf_bytes), "timeline.pdf", "application/pdf")
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
                     st.rerun()
 
@@ -119,7 +119,7 @@ with st.sidebar:
                     else:
                         full_response = st.write_stream(response)
                     pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export {entity_name} Summary as PDF", pdf_bytes, f"{entity_name}_summary.pdf", "application/pdf")
+                    st.download_button(f"Export {entity_name} Summary as PDF", bytes(pdf_bytes), f"{entity_name}_summary.pdf", "application/pdf")
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
                     st.rerun()
 
@@ -140,7 +140,7 @@ with st.sidebar:
                     else:
                         full_response = st.write_stream(response)
                     pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export {report_type} as PDF", pdf_bytes, f"{report_type}.pdf", "application/pdf")
+                    st.download_button(f"Export {report_type} as PDF", bytes(pdf_bytes), f"{report_type}.pdf", "application/pdf")
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
                     st.rerun()
 
@@ -196,7 +196,7 @@ for message in st.session_state.messages:
             pdf_bytes = backend.create_pdf(message["content"])
             st.download_button(
                 label="Export as PDF",
-                data=pdf_bytes,
+                data=bytes(pdf_bytes),
                 file_name=f"{message.get('summary', 'response')}.pdf",
                 mime="application/pdf",
                 key=f"pdf_{message['content'][:20]}" # Unique key for each button
@@ -236,7 +236,7 @@ else:
                 pdf_bytes = backend.create_pdf(full_response)
                 st.download_button(
                     label="Export as PDF",
-                    data=pdf_bytes,
+                    data=bytes(pdf_bytes),
                     file_name="answer.pdf",
                     mime="application/pdf",
                 )
