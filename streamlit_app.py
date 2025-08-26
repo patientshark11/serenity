@@ -8,7 +8,7 @@ st.set_page_config(
     page_title="Project Serenity Q&A",
     page_icon="⚖️",
     layout="centered",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 # --- 2. CUSTOM CSS ---
