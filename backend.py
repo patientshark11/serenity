@@ -129,15 +129,12 @@ def generate_timeline(weaviate_client, openai_client):
 
 def summarize_entity(entity_name, weaviate_client, openai_client):
     try:
-        where_filter = {
-            "path": ["content"],
-            "operator": "Like",
-            "valueText": f"*{entity_name}*",
-        }
+        # Use a vector search for the entity name for more semantic results
+        query_vector = get_embedding(entity_name, openai_client)
         response = (
             weaviate_client.query.get("CustodyDocs", ["content"])
-            .with_where(where_filter)
-            .with_limit(100)
+            .with_near_vector({"vector": query_vector})
+            .with_limit(20)  # Limit to a reasonable number for a summary
             .do()
         )
         results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
