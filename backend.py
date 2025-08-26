@@ -43,11 +43,13 @@ def split_text_into_chunks(text, chunk_size=2000, overlap=200):
 
     return chunks
 
+from weaviate.classes.init import Auth
+
 def connect_to_weaviate():
-    client = weaviate.Client(
-        url=os.environ["WEAVIATE_URL"],
-        auth_client_secret=weaviate.AuthApiKey(api_key=os.environ["WEAVIATE_API_KEY"]),
-        additional_headers={"X-OpenAI-Api-Key": os.environ["OPENAI_API_KEY"]},
+    client = weaviate.connect_to_weaviate_cloud(
+        cluster_url=os.environ["WEAVIATE_URL"],
+        auth_credentials=Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
+        headers={'X-OpenAI-Api-Key': os.environ["OPENAI_API_KEY"]}
     )
     return client
 
