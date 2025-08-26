@@ -1,5 +1,5 @@
 streamlit==1.37.1
-weaviate-client==4.6.0
+weaviate-client==4.16.9
 pyairtable==2.3.4
 openai>=1.30.0
 fpdf2>=2.7.0
