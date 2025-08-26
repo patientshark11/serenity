@@ -33,8 +33,6 @@ def get_or_create_session_state():
             "chunk_size": 2000,
             "openai_model": "gpt-4"
         }
-    if "initial_sync_done" not in st.session_state:
-        st.session_state.initial_sync_done = False
 
 get_or_create_session_state()
 
@@ -85,21 +83,6 @@ with st.sidebar:
             index=["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"].index(st.session_state.settings["openai_model"]),
             help="The AI model used for generating answers and reports. GPT-4 is more powerful but slower and more expensive."
         )
-
-    # Move manual sync to the bottom as a fallback
-    st.divider()
-    if st.button("🔄 Force Data Re-Sync", use_container_width=True):
-        if connect_to_backend():
-            with st.spinner("Syncing data... This may take a moment."):
-                try:
-                    backend.ingest_airtable_to_weaviate(
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        chunk_size=st.session_state.settings["chunk_size"]
-                    )
-                    st.toast("Data sync complete!", icon="✅")
-                except Exception as e:
-                    st.error(f"Sync failed: {e}")
 
     st.header("Analysis Tools")
     if st.button("📅 Generate Timeline", use_container_width=True):
@@ -162,6 +145,23 @@ with st.sidebar:
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
                     st.rerun()
 
+    # Manual sync at the bottom
+    st.divider()
+    st.caption("Database syncs automatically. Use this for a manual override.")
+    if st.button("🔄 Force Data Re-Sync", use_container_width=True):
+        if connect_to_backend():
+            with st.spinner("Syncing data... This may take a moment."):
+                try:
+                    backend.ingest_airtable_to_weaviate(
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        chunk_size=st.session_state.settings["chunk_size"]
+                    )
+                    st.toast("Data sync complete!", icon="✅")
+                except Exception as e:
+                    st.error(f"Sync failed: {e}")
+
+
 # --- Main Chat Interface ---
 st.title("Custody Documentation Q&A")
 
@@ -181,21 +181,6 @@ if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AI
 elif not connect_to_backend():
     st.warning("Could not connect to backend services. Please check your configuration and network.")
 else:
-    # Perform initial sync if it hasn't been done this session
-    if not st.session_state.initial_sync_done:
-        with st.spinner("Performing initial data sync... This may take a moment."):
-            try:
-                backend.ingest_airtable_to_weaviate(
-                    st.session_state.weaviate_client,
-                    st.session_state.openai_client,
-                    chunk_size=st.session_state.settings["chunk_size"]
-                )
-                st.session_state.initial_sync_done = True
-                st.toast("Initial data sync complete!", icon="✅")
-                st.rerun() # Rerun to clear the spinner and show the main UI
-            except Exception as e:
-                st.error(f"Initial sync failed: {e}")
-
     if prompt := st.chat_input("Ask a question about your documentation..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="👧"):
