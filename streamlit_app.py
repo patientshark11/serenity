@@ -53,8 +53,11 @@ def connect_to_backend():
 
 # --- Sidebar ---
 with st.sidebar:
-    logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
-    st.image(logo_path, width=150)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
+        st.image(logo_path, width=100)
+
     st.title("Chat History")
 
     if st.session_state.messages:
@@ -128,6 +131,18 @@ for message in st.session_state.messages:
             for source in message["sources"]:
                 st.markdown(f"- [{source['title']}]({source['url']})")
 
+        # Add download button to past messages
+        if message["role"] == "assistant":
+            pdf_bytes = backend.create_pdf(message["content"])
+            st.download_button(
+                label="Export as PDF",
+                data=pdf_bytes,
+                file_name=f"{message.get('summary', 'response')}.pdf",
+                mime="application/pdf",
+                key=f"pdf_{message['content'][:20]}" # Unique key for each button
+            )
+
+
 # Check for connections before allowing chat
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
     st.warning("Application is not fully configured. Please check environment variables.")
@@ -144,21 +159,33 @@ else:
 
         with st.chat_message("assistant", avatar=assistant_avatar):
             with st.spinner("Searching..."):
-                response_stream, sources, summary = backend.generative_search(
+                response, sources, summary = backend.generative_search(
                     prompt,
                     st.session_state.weaviate_client,
                     st.session_state.openai_client,
                     model=st.session_state.settings["openai_model"],
                     limit=st.session_state.settings["chunk_limit"]
                 )
-                # Use st.write_stream to render the streaming response
-                full_response = st.write_stream(response_stream)
+
+                if isinstance(response, str):
+                    full_response = response
+                    st.write(full_response)
+                else:
+                    full_response = st.write_stream(response)
+
+                pdf_bytes = backend.create_pdf(full_response)
+                st.download_button(
+                    label="Export as PDF",
+                    data=pdf_bytes,
+                    file_name="answer.pdf",
+                    mime="application/pdf",
+                )
+
                 if sources:
                     st.caption("Sources:")
                     for source in sources:
                         st.markdown(f"- [{source['title']}]({source['url']})")
 
-        # Save the complete message to the session state once the stream is finished
         message = {"role": "assistant", "content": full_response, "summary": summary}
         if sources:
             message["sources"] = sources
@@ -184,6 +211,10 @@ with tab1:
                         st.write(full_response)
                     else:
                         full_response = st.write_stream(response)
+
+                    pdf_bytes = backend.create_pdf(full_response)
+                    st.download_button("Export Timeline as PDF", pdf_bytes, "timeline.pdf", "application/pdf")
+
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
                     st.rerun()
 
@@ -204,6 +235,10 @@ with tab2:
                         st.write(full_response)
                     else:
                         full_response = st.write_stream(response)
+
+                    pdf_bytes = backend.create_pdf(full_response)
+                    st.download_button(f"Export {entity_name} Summary as PDF", pdf_bytes, f"{entity_name}_summary.pdf", "application/pdf")
+
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
                     st.rerun()
 
@@ -228,5 +263,9 @@ with tab3:
                         st.write(full_response)
                     else:
                         full_response = st.write_stream(response)
+
+                    pdf_bytes = backend.create_pdf(full_response)
+                    st.download_button(f"Export {report_type} as PDF", pdf_bytes, f"{report_type}.pdf", "application/pdf")
+
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
                     st.rerun()

@@ -292,3 +292,30 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4"):
     except Exception as e:
         logging.error(f"An unexpected error occurred during report generation for '{report_type}'.", exc_info=True)
         return "An unexpected error occurred. Please check the logs."
+
+from fpdf import FPDF
+from io import BytesIO
+
+def create_pdf(text_content):
+    logging.info("Creating PDF document.")
+    try:
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+
+        # Add text to PDF, handling unicode characters
+        # The 'latin-1' encoding is used with a fallback to replace characters that can't be encoded.
+        pdf.multi_cell(0, 10, text=text_content.encode('latin-1', 'replace').decode('latin-1'))
+
+        # Save PDF to a byte buffer
+        buffer = BytesIO()
+        pdf_bytes = pdf.output(dest='S').encode('latin-1')
+        buffer.write(pdf_bytes)
+        buffer.seek(0)
+
+        logging.info("PDF creation successful.")
+        return buffer.getvalue()
+    except Exception as e:
+        logging.error("An unexpected error occurred during PDF creation.", exc_info=True)
+        # Return an empty byte string or handle error appropriately
+        return b""
