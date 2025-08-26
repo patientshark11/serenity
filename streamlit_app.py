@@ -103,6 +103,62 @@ with st.sidebar:
     if model_is_unavailable:
         st.warning("GPT-5 is not yet released. Please select an available model to enable application features.")
 
+    st.divider()
+    st.header("Analysis Tools")
+    assistant_avatar_analysis = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
+
+    if st.button("📅 Generate Timeline", use_container_width=True, disabled=model_is_unavailable):
+        if connect_to_backend():
+            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
+                with st.spinner("Generating timeline..."):
+                    response = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    pdf_bytes = backend.create_pdf(full_response)
+                    st.download_button("Export Timeline as PDF", pdf_bytes, "timeline.pdf", "application/pdf")
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+                    st.rerun()
+
+    entity_name = st.text_input("Enter a name to summarize:", key="entity_input_sidebar", disabled=model_is_unavailable)
+    if st.button("👤 Summarize Person", use_container_width=True, disabled=model_is_unavailable):
+        if connect_to_backend() and entity_name:
+            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
+                with st.spinner(f"Summarizing {entity_name}..."):
+                    response = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    pdf_bytes = backend.create_pdf(full_response)
+                    st.download_button(f"Export {entity_name} Summary as PDF", pdf_bytes, f"{entity_name}_summary.pdf", "application/pdf")
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+                    st.rerun()
+
+    report_type = st.selectbox(
+        "Select a report:",
+        ["", "Conflict Report", "Legal Communication Summary"],
+        key="report_select_sidebar",
+        disabled=model_is_unavailable
+    )
+    if st.button("📄 Generate Report", use_container_width=True, disabled=model_is_unavailable):
+        if connect_to_backend() and report_type:
+            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
+                with st.spinner(f"Generating {report_type}..."):
+                    response = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    pdf_bytes = backend.create_pdf(full_response)
+                    st.download_button(f"Export {report_type} as PDF", pdf_bytes, f"{report_type}.pdf", "application/pdf")
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+                    st.rerun()
+
     # Manual sync at the bottom
     st.divider()
     st.caption("Database syncs automatically. Use this for a manual override.")
@@ -194,83 +250,3 @@ else:
         if sources:
             message["sources"] = sources
         st.session_state.messages.append(message)
-
-# --- Analysis Tools in Main Body ---
-st.header("Analysis Tools")
-tab1, tab2, tab3 = st.tabs(["📅 Timeline", "👤 Person Summary", "📄 Report"])
-assistant_avatar_analysis = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
-
-with tab1:
-    if st.button("Generate Timeline of All Events", use_container_width=True, disabled=model_is_unavailable):
-        if connect_to_backend():
-            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
-                with st.spinner("Generating timeline..."):
-                    response = backend.generate_timeline(
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        model=st.session_state.settings["openai_model"]
-                    )
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-
-                    pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button("Export Timeline as PDF", pdf_bytes, "timeline.pdf", "application/pdf")
-
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
-                    st.rerun()
-
-with tab2:
-    entity_name = st.text_input("Enter a name to summarize:", key="entity_input_main", disabled=model_is_unavailable)
-    if st.button("Summarize Person", use_container_width=True, disabled=model_is_unavailable):
-        if connect_to_backend() and entity_name:
-            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
-                with st.spinner(f"Summarizing {entity_name}..."):
-                    response = backend.summarize_entity(
-                        entity_name,
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        model=st.session_state.settings["openai_model"]
-                    )
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-
-                    pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export {entity_name} Summary as PDF", pdf_bytes, f"{entity_name}_summary.pdf", "application/pdf")
-
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
-                    st.rerun()
-
-with tab3:
-    report_type = st.selectbox(
-        "Select a report to generate:",
-        ["", "Conflict Report", "Legal Communication Summary"],
-        key="report_select_main",
-        disabled=model_is_unavailable
-    )
-    if st.button("Generate Full Report", use_container_width=True, disabled=model_is_unavailable):
-        if connect_to_backend() and report_type:
-            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
-                with st.spinner(f"Generating {report_type}..."):
-                    response = backend.generate_report(
-                        report_type,
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        model=st.session_state.settings["openai_model"]
-                    )
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-
-                    pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export {report_type} as PDF", pdf_bytes, f"{report_type}.pdf", "application/pdf")
-
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
-                    st.rerun()
