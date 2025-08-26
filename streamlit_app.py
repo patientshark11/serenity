@@ -55,7 +55,8 @@ with st.sidebar:
             if msg["role"] == "user":
                 st.markdown(f"**You:** {msg['content']}")
             elif msg["role"] == "assistant":
-                st.markdown(f"**Answer:** {msg['content']}")
+                summary = msg.get("summary", "Summary not available.")
+                st.markdown(f"**Q&A:** {summary}")
                 st.divider()
     else:
         st.info("Your history will appear here.")
@@ -77,12 +78,13 @@ st.title("Custody Documentation Q&A")
 
 # Display prior chat messages
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
+    avatar = "🤖" if message["role"] == "assistant" else "👧"
+    with st.chat_message(message["role"], avatar=avatar):
         st.write(message["content"])
-        if "sources" in message:
+        if "sources" in message and message["sources"]:
             st.caption("Sources:")
-            for source in message["sources"]:
-                st.write(source)
+            for i, source_url in enumerate(message["sources"]):
+                st.markdown(f"- [Source {i+1}]({source_url})")
 
 # Check for connections before allowing chat
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
@@ -92,20 +94,19 @@ elif not connect_to_backend():
 else:
     if prompt := st.chat_input("Ask a question about your documentation..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="👧"):
             st.write(prompt)
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Searching..."):
-                response, sources = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client)
+                response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client)
                 st.write(response)
                 if sources:
                     st.caption("Sources:")
-                    for source in sources:
-                        url = f"https://airtable.com/{os.environ['AIRTABLE_BASE_ID']}/{os.environ['AIRTABLE_TABLE_NAME']}/{source}"
-                        st.markdown(f"- [{source}]({url})")
+                    for i, source_url in enumerate(sources):
+                        st.markdown(f"- [Source {i+1}]({source_url})")
 
-        message = {"role": "assistant", "content": response}
+        message = {"role": "assistant", "content": response, "summary": summary}
         if sources:
-            message["sources"] = [f"https://airtable.com/{os.environ['AIRTABLE_BASE_ID']}/{os.environ['AIRTABLE_TABLE_NAME']}/{s}" for s in sources]
+            message["sources"] = sources
         st.session_state.messages.append(message)

@@ -30,6 +30,7 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client):
         "properties": [
             {"name": "content", "dataType": ["text"]},
             {"name": "airtable_record_id", "dataType": ["text"]},
+            {"name": "primary_source_content", "dataType": ["text"]},
         ],
     }
     weaviate_client.schema.create_class(class_obj)
@@ -45,6 +46,7 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client):
                 data_obj = {
                     "content": content,
                     "airtable_record_id": item["id"],
+                    "primary_source_content": fields.get("Primary Source Content", ""),
                 }
                 batch.add_data_object(
                     data_object=data_obj,
@@ -58,13 +60,13 @@ def generative_search(query, weaviate_client, openai_client):
         response_count = weaviate_client.query.aggregate("CustodyDocs").with_meta_count().do()
         count = response_count["data"]["Aggregate"]["CustodyDocs"][0]["meta"]["count"]
         if count == 0:
-            return "The database is empty. Please click 'Sync Data from Airtable' in the sidebar to add your documentation.", []
+            return "The database is empty. Please click 'Sync Data from Airtable' in the sidebar to add your documentation.", [], ""
     except Exception:
-        return "Could not connect to the database. Please ensure it's running and accessible.", []
+        return "Could not connect to the database. Please ensure it's running and accessible.", [], ""
 
     query_vector = get_embedding(query, openai_client)
     response = (
-        weaviate_client.query.get("CustodyDocs", ["content", "airtable_record_id"])
+        weaviate_client.query.get("CustodyDocs", ["content", "primary_source_content"])
         .with_near_vector({"vector": query_vector})
         .with_limit(3)
         .do()
@@ -72,21 +74,32 @@ def generative_search(query, weaviate_client, openai_client):
     results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
 
     if not results:
-        return "I couldn't find a relevant answer in the documentation.", []
+        return "I couldn't find a relevant answer in the documentation.", [], ""
 
     context = "\n".join([r["content"] for r in results])
-    prompt = f"Based on the following context, please answer the question.\n\nContext:\n{context}\n\nQuestion: {query}"
+    answer_prompt = f"Based on the following context, please answer the question.\n\nContext:\n{context}\n\nQuestion: {query}"
 
     try:
-        response = openai_client.chat.completions.create(
+        answer_response = openai_client.chat.completions.create(
             model=os.environ.get("OPENAI_COMPLETION_MODEL", "gpt-4"),
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided context."},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": answer_prompt},
             ],
         )
-        answer = response.choices[0].message.content
-        source_ids = [r["airtable_record_id"] for r in results]
-        return answer, source_ids
+        answer = answer_response.choices[0].message.content
+        sources = [r["primary_source_content"] for r in results if r.get("primary_source_content")]
+
+        summary_prompt = f"Please create a very short, one-sentence summary of the following question and answer. Question: {query} Answer: {answer}"
+        summary_response = openai_client.chat.completions.create(
+            model=os.environ.get("OPENAI_COMPLETION_MODEL", "gpt-4"),
+            messages=[
+                {"role": "system", "content": "You are an expert summarizer."},
+                {"role": "user", "content": summary_prompt},
+            ],
+        )
+        summary = summary_response.choices[0].message.content
+
+        return answer, sources, summary
     except OpenAI_APIError as e:
-        return f"An error occurred with the OpenAI API: {e}", []
+        return f"An error occurred with the OpenAI API: {e}", [], ""
