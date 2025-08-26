@@ -58,21 +58,6 @@ with st.sidebar:
         logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
         st.image(logo_path, width=100)
 
-    st.title("Chat History")
-
-    if st.session_state.messages:
-        for msg in st.session_state.messages:
-            if msg["role"] == "user":
-                st.markdown(f"**You:** {msg['content']}")
-            elif msg["role"] == "assistant":
-                summary = msg.get("summary", "Summary not available.")
-                st.markdown(f"**Q&A:** {summary}")
-                st.divider()
-    else:
-        st.info("Your history will appear here.")
-
-    st.divider()
-
     with st.expander("⚙️ Settings"):
         st.session_state.settings["chunk_size"] = st.slider(
             "Context Chunk Size",
@@ -174,6 +159,20 @@ with st.sidebar:
                     st.toast("Data sync complete!", icon="✅")
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
+
+    st.divider()
+    st.title("Chat History")
+
+    if st.session_state.messages:
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                st.markdown(f"**You:** {msg['content']}")
+            elif msg["role"] == "assistant":
+                summary = msg.get("summary", "Summary not available.")
+                st.markdown(f"**Q&A:** {summary}")
+                st.divider()
+    else:
+        st.info("Your history will appear here.")
 
 
 # --- Main Chat Interface ---
