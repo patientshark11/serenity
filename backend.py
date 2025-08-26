@@ -70,8 +70,8 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client):
         batch.batch_size = 100
         for item in records:
             fields = item.get("fields", {})
-            # Concatenate all fields into a single text block
-            full_content = " ".join(f"{k}: {v}" for k, v in fields.items() if v)
+            # Concatenate only the values for better semantic search
+            full_content = " ".join(str(v) for v in fields.values() if v)
             source_url = fields.get("Primary Source Content", "")
 
             if not full_content:
