@@ -73,6 +73,35 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
 
+    st.header("Analysis Tools")
+    if st.button("📅 Generate Timeline", use_container_width=True):
+        if connect_to_backend():
+            with st.spinner("Generating timeline..."):
+                timeline = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client)
+                st.session_state.messages.append({"role": "assistant", "content": timeline, "summary": "Generated a timeline of events."})
+                st.rerun()
+
+    entity_name = st.text_input("Enter a name to summarize:", key="entity_input")
+    if st.button("👤 Summarize Person", use_container_width=True):
+        if connect_to_backend() and entity_name:
+            with st.spinner(f"Summarizing {entity_name}..."):
+                summary = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client)
+                st.session_state.messages.append({"role": "assistant", "content": summary, "summary": f"Generated a summary for {entity_name}."})
+                st.rerun()
+
+    st.divider()
+    report_type = st.selectbox(
+        "Select a report to generate:",
+        ["", "Conflict Report", "Legal Communication Summary"],
+        key="report_select"
+    )
+    if st.button("📄 Generate Report", use_container_width=True):
+        if connect_to_backend() and report_type:
+            with st.spinner(f"Generating {report_type}..."):
+                report = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client)
+                st.session_state.messages.append({"role": "assistant", "content": report, "summary": f"Generated a {report_type}."})
+                st.rerun()
+
 # --- Main Chat Interface ---
 st.title("Custody Documentation Q&A")
 

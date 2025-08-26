@@ -103,3 +103,98 @@ def generative_search(query, weaviate_client, openai_client):
         return answer, sources, summary
     except OpenAI_APIError as e:
         return f"An error occurred with the OpenAI API: {e}", [], ""
+
+def generate_timeline(weaviate_client, openai_client):
+    try:
+        response = weaviate_client.query.get("CustodyDocs", ["content"]).with_limit(1000).do()
+        results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
+
+        if not results:
+            return "No documents found to generate a timeline from."
+
+        context = "\n---\n".join([r["content"] for r in results])
+        prompt = f"Based on the following context, please extract all events with their corresponding dates and present them as a chronological timeline. If dates are ambiguous, make a reasonable inference. Format the output clearly with dates and descriptions. \n\nContext:\n{context}"
+
+        response = openai_client.chat.completions.create(
+            model=os.environ.get("OPENAI_COMPLETION_MODEL", "gpt-4"),
+            messages=[
+                {"role": "system", "content": "You are an expert at creating timelines from unstructured text."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        timeline = response.choices[0].message.content
+        return timeline
+    except Exception as e:
+        return f"An error occurred while generating the timeline: {e}"
+
+def summarize_entity(entity_name, weaviate_client, openai_client):
+    try:
+        where_filter = {
+            "path": ["content"],
+            "operator": "Like",
+            "valueText": f"*{entity_name}*",
+        }
+        response = (
+            weaviate_client.query.get("CustodyDocs", ["content"])
+            .with_where(where_filter)
+            .with_limit(100)
+            .do()
+        )
+        results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
+
+        if not results:
+            return f"No documents found mentioning '{entity_name}'."
+
+        context = "\n---\n".join([r["content"] for r in results])
+        prompt = f"Based on the following documents, please provide a detailed summary of all key events, interactions, and statements related to the person: {entity_name}. \n\nContext:\n{context}"
+
+        response = openai_client.chat.completions.create(
+            model=os.environ.get("OPENAI_COMPLETION_MODEL", "gpt-4"),
+            messages=[
+                {"role": "system", "content": "You are an expert at summarizing information about people from unstructured text."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        summary = response.choices[0].message.content
+        return summary
+    except Exception as e:
+        return f"An error occurred while generating the summary: {e}"
+
+def generate_report(report_type, weaviate_client, openai_client):
+    report_concepts = {
+        "Conflict Report": "Report on arguments, disagreements, fights, conflicts, and issues.",
+        "Legal Communication Summary": "Summary of communication involving lawyers, legal matters, court, attorneys, and custody agreements."
+    }
+
+    concept = report_concepts.get(report_type)
+    if not concept:
+        return "Invalid report type selected."
+
+    try:
+        # Use a vector search based on the concept to find relevant documents
+        query_vector = get_embedding(concept, openai_client)
+        response = (
+            weaviate_client.query.get("CustodyDocs", ["content"])
+            .with_near_vector({"vector": query_vector})
+            .with_limit(100)
+            .do()
+        )
+        results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
+
+        if not results:
+            return f"No documents found to generate a '{report_type}'."
+
+        context = "\n---\n".join([r["content"] for r in results])
+        prompt = f"Please generate a detailed '{report_type}' based on the provided documents. Synthesize the information into a coherent report, highlighting key events, people, and dates. \n\nContext:\n{context}"
+
+        response = openai_client.chat.completions.create(
+            model=os.environ.get("OPENAI_COMPLETION_MODEL", "gpt-4"),
+            messages=[
+                {"role": "system", "content": "You are an expert at writing detailed reports from unstructured text."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        report = response.choices[0].message.content
+        return report
+    except Exception as e:
+        return f"An error occurred while generating the report: {e}"
