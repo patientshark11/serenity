@@ -31,7 +31,8 @@ def get_or_create_session_state():
     if "settings" not in st.session_state:
         st.session_state.settings = {
             "chunk_size": 2000,
-            "openai_model": "gpt-4"
+            "openai_model": "gpt-4",
+            "chunk_limit": 5
         }
 
 get_or_create_session_state()
@@ -77,73 +78,23 @@ with st.sidebar:
             step=100,
             help="Controls how much text the AI looks at once. Smaller chunks are faster but might miss some context. Larger chunks are more detailed but can be slower. Default: 2000"
         )
+        models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+        if st.session_state.settings["openai_model"] not in models:
+            st.session_state.settings["openai_model"] = models[0]
+
         st.session_state.settings["openai_model"] = st.selectbox(
             "OpenAI Model",
-            ["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"],
-            index=["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"].index(st.session_state.settings["openai_model"]),
-            help="The AI model used for generating answers and reports. GPT-4 is more powerful but slower and more expensive."
+            models,
+            index=models.index(st.session_state.settings["openai_model"]),
+            help="Select the AI model for generating answers. `gpt-4o` is the latest, fastest, and most capable model."
         )
-
-    st.header("Analysis Tools")
-    if st.button("📅 Generate Timeline", use_container_width=True):
-        if connect_to_backend():
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner("Generating timeline..."):
-                    response = backend.generate_timeline(
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        model=st.session_state.settings["openai_model"]
-                    )
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
-                    st.rerun()
-
-    entity_name = st.text_input("Enter a name to summarize:", key="entity_input")
-    if st.button("👤 Summarize Person", use_container_width=True):
-        if connect_to_backend() and entity_name:
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner(f"Summarizing {entity_name}..."):
-                    response = backend.summarize_entity(
-                        entity_name,
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        model=st.session_state.settings["openai_model"]
-                    )
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
-                    st.rerun()
-
-    st.divider()
-    report_type = st.selectbox(
-        "Select a report to generate:",
-        ["", "Conflict Report", "Legal Communication Summary"],
-        key="report_select"
-    )
-    if st.button("📄 Generate Report", use_container_width=True):
-        if connect_to_backend() and report_type:
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner(f"Generating {report_type}..."):
-                    response = backend.generate_report(
-                        report_type,
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        model=st.session_state.settings["openai_model"]
-                    )
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
-                    st.rerun()
+        st.session_state.settings["chunk_limit"] = st.slider(
+            "Number of Sources to Retrieve",
+            min_value=1, max_value=10,
+            value=st.session_state.settings.get("chunk_limit", 5),
+            step=1,
+            help="The number of text chunks to use as context for the answer. More sources can provide more detail but may increase processing time."
+        )
 
     # Manual sync at the bottom
     st.divider()
@@ -172,8 +123,8 @@ for message in st.session_state.messages:
         st.write(message["content"])
         if "sources" in message and message["sources"]:
             st.caption("Sources:")
-            for i, source_url in enumerate(message["sources"]):
-                st.markdown(f"- [Source {i+1}]({source_url})")
+            for source in message["sources"]:
+                st.markdown(f"- [{source['title']}]({source['url']})")
 
 # Check for connections before allowing chat
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
@@ -192,17 +143,84 @@ else:
                     prompt,
                     st.session_state.weaviate_client,
                     st.session_state.openai_client,
-                    model=st.session_state.settings["openai_model"]
+                    model=st.session_state.settings["openai_model"],
+                    limit=st.session_state.settings["chunk_limit"]
                 )
                 # Use st.write_stream to render the streaming response
                 full_response = st.write_stream(response_stream)
                 if sources:
                     st.caption("Sources:")
-                    for i, source_url in enumerate(sources):
-                        st.markdown(f"- [Source {i+1}]({source_url})")
+                    for source in sources:
+                        st.markdown(f"- [{source['title']}]({source['url']})")
 
         # Save the complete message to the session state once the stream is finished
         message = {"role": "assistant", "content": full_response, "summary": summary}
         if sources:
             message["sources"] = sources
         st.session_state.messages.append(message)
+
+# --- Analysis Tools in Main Body ---
+st.header("Analysis Tools")
+tab1, tab2, tab3 = st.tabs(["📅 Timeline", "👤 Person Summary", "📄 Report"])
+
+with tab1:
+    if st.button("Generate Timeline of All Events", use_container_width=True):
+        if connect_to_backend():
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner("Generating timeline..."):
+                    response = backend.generate_timeline(
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+                    st.rerun()
+
+with tab2:
+    entity_name = st.text_input("Enter a name to summarize:", key="entity_input_main")
+    if st.button("Summarize Person", use_container_width=True):
+        if connect_to_backend() and entity_name:
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner(f"Summarizing {entity_name}..."):
+                    response = backend.summarize_entity(
+                        entity_name,
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+                    st.rerun()
+
+with tab3:
+    report_type = st.selectbox(
+        "Select a report to generate:",
+        ["", "Conflict Report", "Legal Communication Summary"],
+        key="report_select_main"
+    )
+    if st.button("Generate Full Report", use_container_width=True):
+        if connect_to_backend() and report_type:
+            with st.chat_message("assistant", avatar="🤖"):
+                with st.spinner(f"Generating {report_type}..."):
+                    response = backend.generate_report(
+                        report_type,
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        full_response = st.write_stream(response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+                    st.rerun()

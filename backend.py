@@ -69,6 +69,7 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
                 {"name": "chunk_content", "dataType": ["text"]},
                 {"name": "airtable_record_id", "dataType": ["text"]},
                 {"name": "primary_source_content", "dataType": ["text"]},
+                {"name": "summary_title", "dataType": ["text"]},
             ],
         }
         weaviate_client.schema.create_class(class_obj)
@@ -86,6 +87,7 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
                 fields = item.get("fields", {})
                 full_content = " ".join(str(v) for v in fields.values() if v)
                 source_url = fields.get("Primary Source Content", "")
+                summary_title = fields.get("Summary Title", "Untitled Source")
 
                 if not full_content:
                     continue
@@ -97,6 +99,7 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
                         "chunk_content": chunk,
                         "airtable_record_id": item["id"],
                         "primary_source_content": source_url,
+                        "summary_title": summary_title,
                     }
                     batch.add_data_object(data_object=data_obj, class_name=class_name, uuid=str(uuid.uuid4()), vector=emb)
         logging.info("Weaviate batch import completed.")
@@ -111,15 +114,15 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
         logging.error("An unexpected error occurred during ingestion.", exc_info=True)
         raise e
 
-def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
-    logging.info(f"Performing generative search for query: {query} with model: {model}")
+def generative_search(query, weaviate_client, openai_client, model="gpt-4", limit=5):
+    logging.info(f"Performing generative search for query: {query} with model: {model} and limit: {limit}")
     try:
         # Weaviate query
         query_vector = get_embedding(query, openai_client)
         response = (
-            weaviate_client.query.get("CustodyDocs", ["chunk_content", "primary_source_content"])
+            weaviate_client.query.get("CustodyDocs", ["chunk_content", "primary_source_content", "summary_title"])
             .with_near_vector({"vector": query_vector})
-            .with_limit(5)
+            .with_limit(limit)
             .do()
         )
         results = response.get("data", {}).get("Get", {}).get("CustodyDocs")
@@ -139,7 +142,14 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
             stream=True
         )
 
-        sources = list(set([r["primary_source_content"] for r in results if r.get("primary_source_content")]))
+        # Create a list of unique sources with titles and URLs
+        sources_raw = [
+            {"title": r.get("summary_title"), "url": r.get("primary_source_content")}
+            for r in results if r.get("primary_source_content")
+        ]
+        # Deduplicate based on URL
+        unique_sources = {s["url"]: s for s in sources_raw}.values()
+        sources = list(unique_sources)
 
         # With streaming, we can't generate a summary from the full answer.
         # We'll create a placeholder summary instead.
