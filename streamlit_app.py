@@ -146,7 +146,7 @@ with st.sidebar:
 
     # Manual sync at the bottom
     st.divider()
-    st.caption("Database syncs automatically. Use this for a manual override.")
+    st.caption("Your data is synced automatically on a schedule by the server.")
     if st.button("🔄 Force Data Re-Sync", use_container_width=True):
         if connect_to_backend():
             with st.spinner("Syncing data... This may take a moment."):
@@ -159,6 +159,7 @@ with st.sidebar:
                     st.toast("Data sync complete!", icon="✅")
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
+    st.markdown("<p style='font-size: 0.8rem; color: #e74c3c;'><b>Important:</b> If search is not working after an update, please click the re-sync button above.</p>", unsafe_allow_html=True)
 
     st.divider()
     st.title("Chat History")
