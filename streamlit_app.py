@@ -118,7 +118,9 @@ st.title("Custody Documentation Q&A")
 
 # Display prior chat messages
 for message in st.session_state.messages:
-    avatar = "🤖" if message["role"] == "assistant" else "👧"
+    user_avatar = "https://ui-avatars.com/api/?name=Question&background=F0F2F6&color=0F172A"
+    assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
+    avatar = assistant_avatar if message["role"] == "assistant" else user_avatar
     with st.chat_message(message["role"], avatar=avatar):
         st.write(message["content"])
         if "sources" in message and message["sources"]:
@@ -132,12 +134,15 @@ if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AI
 elif not connect_to_backend():
     st.warning("Could not connect to backend services. Please check your configuration and network.")
 else:
+    user_avatar = "https://ui-avatars.com/api/?name=Question&background=F0F2F6&color=0F172A"
+    assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
+
     if prompt := st.chat_input("Ask a question about your documentation..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user", avatar="👧"):
+        with st.chat_message("user", avatar=user_avatar):
             st.write(prompt)
 
-        with st.chat_message("assistant", avatar="🤖"):
+        with st.chat_message("assistant", avatar=assistant_avatar):
             with st.spinner("Searching..."):
                 response_stream, sources, summary = backend.generative_search(
                     prompt,
@@ -162,11 +167,12 @@ else:
 # --- Analysis Tools in Main Body ---
 st.header("Analysis Tools")
 tab1, tab2, tab3 = st.tabs(["📅 Timeline", "👤 Person Summary", "📄 Report"])
+assistant_avatar_analysis = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
 
 with tab1:
     if st.button("Generate Timeline of All Events", use_container_width=True):
         if connect_to_backend():
-            with st.chat_message("assistant", avatar="🤖"):
+            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
                 with st.spinner("Generating timeline..."):
                     response = backend.generate_timeline(
                         st.session_state.weaviate_client,
@@ -185,7 +191,7 @@ with tab2:
     entity_name = st.text_input("Enter a name to summarize:", key="entity_input_main")
     if st.button("Summarize Person", use_container_width=True):
         if connect_to_backend() and entity_name:
-            with st.chat_message("assistant", avatar="🤖"):
+            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
                 with st.spinner(f"Summarizing {entity_name}..."):
                     response = backend.summarize_entity(
                         entity_name,
@@ -209,7 +215,7 @@ with tab3:
     )
     if st.button("Generate Full Report", use_container_width=True):
         if connect_to_backend() and report_type:
-            with st.chat_message("assistant", avatar="🤖"):
+            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
                 with st.spinner(f"Generating {report_type}..."):
                     response = backend.generate_report(
                         report_type,
