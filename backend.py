@@ -214,11 +214,18 @@ def create_pdf(text_content):
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
+
+        # Sanitize text for the PDF's core font, which does not support all Unicode.
+        # This replaces unsupported characters to prevent errors.
         sanitized_text = text_content.encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 10, text=sanitized_text)
-        pdf_output = pdf.output(dest='S').encode('latin-1')
-        final_bytes = bytes(pdf_output)
-        return final_bytes
+
+        # The .output() method with no destination returns a bytes object directly.
+        # This is the correct and simplest way to get the data for the download button.
+        pdf_bytes = pdf.output()
+
+        logging.info("PDF creation successful.")
+        return pdf_bytes
     except Exception as e:
         logging.error("An unexpected error occurred during PDF creation.", exc_info=True)
         return b""
