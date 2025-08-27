@@ -12,9 +12,7 @@ import logging
 # --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='app.log',
-    filemode='a'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 def split_text_into_chunks(text, chunk_size=2000, overlap=200):
