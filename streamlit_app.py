@@ -59,11 +59,9 @@ with st.sidebar:
 
     with st.expander("⚙️ Settings"):
         st.session_state.settings["chunk_size"] = st.slider(
-            "Context Chunk Size",
-            min_value=500, max_value=4000,
-            value=st.session_state.settings["chunk_size"],
-            step=100,
-            help="Controls how much text the AI looks at once. Smaller chunks are faster but might miss some context. Larger chunks are more detailed but can be slower. Default: 2000"
+            "Context Chunk Size", min_value=500, max_value=4000,
+            value=st.session_state.settings["chunk_size"], step=100,
+            help="Controls text chunk size. Smaller is faster, larger has more context."
         )
         models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "GPT-5 (Not Yet Available)"]
         if st.session_state.settings["openai_model"] not in models:
@@ -75,7 +73,7 @@ with st.sidebar:
         st.session_state.settings["chunk_limit"] = st.slider(
             "Number of Sources to Retrieve", min_value=1, max_value=10,
             value=st.session_state.settings.get("chunk_limit", 5), step=1,
-            help="The number of text chunks to use as context for the answer."
+            help="Number of text chunks to use as context."
         )
 
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
@@ -84,54 +82,32 @@ with st.sidebar:
 
     st.divider()
     st.header("Analysis Tools")
-    assistant_avatar_analysis = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
 
     if st.button("📅 Generate Timeline", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend():
-            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
-                with st.spinner("Generating timeline..."):
-                    response = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-                    pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button("Export as PDF", bytes(pdf_bytes), "timeline.pdf", "application/pdf")
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
-                    st.rerun()
+            with st.spinner("Generating timeline... (this may take a moment)"):
+                response_stream = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = "".join(c for c in response_stream) if not isinstance(response_stream, str) else response_stream
+                st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+                st.rerun()
 
     entity_name = st.text_input("Enter a name to summarize:", key="entity_input_sidebar", disabled=model_is_unavailable)
     if st.button("👤 Summarize Person", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend() and entity_name:
-            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
-                with st.spinner(f"Summarizing {entity_name}..."):
-                    response = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-                    pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export as PDF", bytes(pdf_bytes), f"{entity_name}_summary.pdf", "application/pdf")
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
-                    st.rerun()
+            with st.spinner(f"Summarizing {entity_name}... (this may take a moment)"):
+                response_stream = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = "".join(c for c in response_stream) if not isinstance(response_stream, str) else response_stream
+                st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+                st.rerun()
 
     report_type = st.selectbox("Select a report:", ["", "Conflict Report", "Legal Communication Summary"], key="report_select_sidebar", disabled=model_is_unavailable)
     if st.button("📄 Generate Report", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend() and report_type:
-            with st.chat_message("assistant", avatar=assistant_avatar_analysis):
-                with st.spinner(f"Generating {report_type}..."):
-                    response = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                    if isinstance(response, str):
-                        full_response = response
-                        st.write(full_response)
-                    else:
-                        full_response = st.write_stream(response)
-                    pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export as PDF", bytes(pdf_bytes), f"{report_type}.pdf", "application/pdf")
-                    st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
-                    st.rerun()
+            with st.spinner(f"Generating {report_type}... (this may take a moment)"):
+                response_stream = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = "".join(c for c in response_stream) if not isinstance(response_stream, str) else response_stream
+                st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+                st.rerun()
 
     st.divider()
     st.caption("For best results, re-sync data after code updates.")
