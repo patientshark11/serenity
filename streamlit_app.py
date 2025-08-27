@@ -27,11 +27,10 @@ def get_or_create_session_state():
         st.session_state.weaviate_client = None
     if "openai_client" not in st.session_state:
         st.session_state.openai_client = None
-    # Add settings to session state
     if "settings" not in st.session_state:
         st.session_state.settings = {
             "chunk_size": 2000,
-            "openai_model": "gpt-4",
+            "openai_model": "gpt-4o",
             "chunk_limit": 5
         }
 
@@ -69,24 +68,19 @@ with st.sidebar:
         models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "GPT-5 (Not Yet Available)"]
         if st.session_state.settings["openai_model"] not in models:
             st.session_state.settings["openai_model"] = models[0]
-
         st.session_state.settings["openai_model"] = st.selectbox(
-            "OpenAI Model",
-            models,
-            index=models.index(st.session_state.settings["openai_model"]),
-            help="Select the AI model for generating answers. `gpt-4o` is the latest, fastest, and most capable model."
+            "OpenAI Model", models, index=models.index(st.session_state.settings["openai_model"]),
+            help="Select the AI model. `gpt-4o` is the latest and most capable."
         )
         st.session_state.settings["chunk_limit"] = st.slider(
-            "Number of Sources to Retrieve",
-            min_value=1, max_value=10,
-            value=st.session_state.settings.get("chunk_limit", 5),
-            step=1,
-            help="The number of text chunks to use as context for the answer. More sources can provide more detail but may increase processing time."
+            "Number of Sources to Retrieve", min_value=1, max_value=10,
+            value=st.session_state.settings.get("chunk_limit", 5), step=1,
+            help="The number of text chunks to use as context for the answer."
         )
 
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
     if model_is_unavailable:
-        st.warning("GPT-5 is not yet released. Please select an available model to enable application features.")
+        st.warning("GPT-5 is not yet released. Please select another model.")
 
     st.divider()
     st.header("Analysis Tools")
@@ -103,7 +97,7 @@ with st.sidebar:
                     else:
                         full_response = st.write_stream(response)
                     pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button("Export Timeline as PDF", bytes(pdf_bytes), "timeline.pdf", "application/pdf")
+                    st.download_button("Export as PDF", bytes(pdf_bytes), "timeline.pdf", "application/pdf")
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
                     st.rerun()
 
@@ -119,16 +113,11 @@ with st.sidebar:
                     else:
                         full_response = st.write_stream(response)
                     pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export {entity_name} Summary as PDF", bytes(pdf_bytes), f"{entity_name}_summary.pdf", "application/pdf")
+                    st.download_button(f"Export as PDF", bytes(pdf_bytes), f"{entity_name}_summary.pdf", "application/pdf")
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
                     st.rerun()
 
-    report_type = st.selectbox(
-        "Select a report:",
-        ["", "Conflict Report", "Legal Communication Summary"],
-        key="report_select_sidebar",
-        disabled=model_is_unavailable
-    )
+    report_type = st.selectbox("Select a report:", ["", "Conflict Report", "Legal Communication Summary"], key="report_select_sidebar", disabled=model_is_unavailable)
     if st.button("📄 Generate Report", use_container_width=True, disabled=model_is_unavailable):
         if connect_to_backend() and report_type:
             with st.chat_message("assistant", avatar=assistant_avatar_analysis):
@@ -140,30 +129,23 @@ with st.sidebar:
                     else:
                         full_response = st.write_stream(response)
                     pdf_bytes = backend.create_pdf(full_response)
-                    st.download_button(f"Export {report_type} as PDF", bytes(pdf_bytes), f"{report_type}.pdf", "application/pdf")
+                    st.download_button(f"Export as PDF", bytes(pdf_bytes), f"{report_type}.pdf", "application/pdf")
                     st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
                     st.rerun()
 
-    # Manual sync at the bottom
     st.divider()
-    st.caption("Your data is synced automatically on a schedule by the server.")
+    st.caption("For best results, re-sync data after code updates.")
     if st.button("🔄 Force Data Re-Sync", use_container_width=True):
         if connect_to_backend():
-            with st.spinner("Syncing data... This may take a moment."):
+            with st.spinner("Syncing data..."):
                 try:
-                    backend.ingest_airtable_to_weaviate(
-                        st.session_state.weaviate_client,
-                        st.session_state.openai_client,
-                        chunk_size=st.session_state.settings["chunk_size"]
-                    )
+                    backend.ingest_airtable_to_weaviate(st.session_state.weaviate_client, st.session_state.openai_client, chunk_size=st.session_state.settings["chunk_size"])
                     st.toast("Data sync complete!", icon="✅")
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
-    st.markdown("<p style='font-size: 0.8rem; color: #e74c3c;'><b>Important:</b> If search is not working after an update, please click the re-sync button above.</p>", unsafe_allow_html=True)
 
     st.divider()
     st.title("Chat History")
-
     if st.session_state.messages:
         for msg in st.session_state.messages:
             if msg["role"] == "user":
@@ -174,7 +156,6 @@ with st.sidebar:
                 st.divider()
     else:
         st.info("Your history will appear here.")
-
 
 # --- Main Chat Interface ---
 st.title("Custody Documentation Q&A")
@@ -191,17 +172,9 @@ for message in st.session_state.messages:
             for source in message["sources"]:
                 st.markdown(f"- [{source['title']}]({source['url']})")
 
-        # Add download button to past messages
         if message["role"] == "assistant":
             pdf_bytes = backend.create_pdf(message["content"])
-            st.download_button(
-                label="Export as PDF",
-                data=bytes(pdf_bytes),
-                file_name=f"{message.get('summary', 'response')}.pdf",
-                mime="application/pdf",
-                key=f"pdf_{message['content'][:20]}" # Unique key for each button
-            )
-
+            st.download_button("Export as PDF", bytes(pdf_bytes), f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message['content'][:20]}")
 
 # Check for connections before allowing chat
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
@@ -211,6 +184,7 @@ elif not connect_to_backend():
 else:
     user_avatar = "https://ui-avatars.com/api/?name=Question&background=F0F2F6&color=0F172A"
     assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
+    model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
 
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -219,13 +193,7 @@ else:
 
         with st.chat_message("assistant", avatar=assistant_avatar):
             with st.spinner("Searching..."):
-                response, sources, summary = backend.generative_search(
-                    prompt,
-                    st.session_state.weaviate_client,
-                    st.session_state.openai_client,
-                    model=st.session_state.settings["openai_model"],
-                    limit=st.session_state.settings["chunk_limit"]
-                )
+                response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"], limit=st.session_state.settings["chunk_limit"])
 
                 if isinstance(response, str):
                     full_response = response
@@ -234,12 +202,7 @@ else:
                     full_response = st.write_stream(response)
 
                 pdf_bytes = backend.create_pdf(full_response)
-                st.download_button(
-                    label="Export as PDF",
-                    data=bytes(pdf_bytes),
-                    file_name="answer.pdf",
-                    mime="application/pdf",
-                )
+                st.download_button("Export as PDF", bytes(pdf_bytes), "answer.pdf", "application/pdf")
 
                 if sources:
                     st.caption("Sources:")
