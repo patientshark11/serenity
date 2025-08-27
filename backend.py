@@ -303,21 +303,20 @@ def create_pdf(text_content):
     try:
         pdf = FPDF()
         pdf.add_page()
-
-        # Add a Unicode font. FPDF includes some by default.
-        # Let's use a standard one and handle encoding carefully.
         pdf.set_font("Arial", size=12)
 
-        # Encode the text properly for the core font
-        # The key is to handle characters that the font doesn't support
-        text_content = text_content.encode('latin-1', 'replace').decode('latin-1')
-        pdf.multi_cell(0, 10, text=text_content)
+        # Sanitize text for the PDF's core font encoding
+        sanitized_text = text_content.encode('latin-1', 'replace').decode('latin-1')
+        pdf.multi_cell(0, 10, text=sanitized_text)
 
-        # output() with no destination returns bytes by default
-        pdf_bytes = pdf.output()
+        # Generate the PDF into a byte array
+        pdf_output = pdf.output(dest='S').encode('latin-1')
 
-        logging.info("PDF creation successful.")
-        return pdf_bytes
+        # Explicitly convert the output to a `bytes` object to be safe
+        final_bytes = bytes(pdf_output)
+
+        logging.info(f"PDF creation successful. Output type: {type(final_bytes)}")
+        return final_bytes
     except Exception as e:
         logging.error("An unexpected error occurred during PDF creation.", exc_info=True)
         return b""
