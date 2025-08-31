@@ -208,22 +208,41 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4"):
         logging.error(f"An unexpected error occurred during report generation for '{report_type}'.", exc_info=True)
         return "An unexpected error occurred. Please check the logs."
 
-def create_pdf(text_content):
+def create_pdf(text_content, summary=None, sources=None):
     logging.info("Creating PDF document.")
     try:
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
 
-        # Sanitize text for the PDF's core font, which does not support all Unicode.
-        # This replaces unsupported characters to prevent errors.
+        # Add Summary as Title
+        if summary:
+            pdf.set_font("Arial", 'B', 16)
+            sanitized_summary = summary.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 10, text=sanitized_summary, align='C')
+            pdf.ln(10)
+
+        # Add Main Content
+        pdf.set_font("Arial", size=12)
         sanitized_text = text_content.encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 10, text=sanitized_text)
 
-        # The .output() method with no destination returns a bytes object directly.
-        # This is the correct and simplest way to get the data for the download button.
-        pdf_bytes = pdf.output()
+        # Add Sources
+        if sources:
+            pdf.ln(10)
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, "Sources", ln=True)
+            pdf.set_font("Arial", size=12)
+            for source in sources:
+                title = source.get('title', 'Source Link').encode('latin-1', 'replace').decode('latin-1')
+                url = source.get('url')
+                if url:
+                    pdf.cell(0, 10, f"- {title}: ")
+                    pdf.set_text_color(0, 0, 255)
+                    pdf.cell(0, 10, url, ln=True, link=url)
+                    pdf.set_text_color(0, 0, 0)
 
+        pdf_bytes = pdf.output()
         logging.info("PDF creation successful.")
         return pdf_bytes
     except Exception as e:

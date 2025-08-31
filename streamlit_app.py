@@ -33,7 +33,6 @@ def get_or_create_session_state():
             "openai_model": "gpt-4o",
             "chunk_limit": 5
         }
-    # Flags for triggering analysis tools
     if "run_timeline" not in st.session_state:
         st.session_state.run_timeline = False
     if "run_summary" not in st.session_state:
@@ -149,7 +148,11 @@ for message in st.session_state.messages:
                 st.markdown(f"- [{source['title']}]({source['url']})")
 
         if message["role"] == "assistant":
-            pdf_bytes = backend.create_pdf(message["content"])
+            pdf_bytes = backend.create_pdf(
+                text_content=message["content"],
+                summary=message.get("summary"),
+                sources=message.get("sources")
+            )
             st.download_button("Export as PDF", bytes(pdf_bytes), f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message['content'][:20]}")
 
 # Check for connections before allowing chat
@@ -169,8 +172,9 @@ else:
             with st.spinner("Generating timeline..."):
                 response = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
                 full_response = st.write_stream(response) if not isinstance(response, str) else response
-                if isinstance(response, str): st.write(full_response) # Write error messages
+                if isinstance(response, str): st.write(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+        st.rerun()
 
     if st.session_state.get("run_summary"):
         entity_name = st.session_state.entity_name_to_summarize
@@ -181,6 +185,7 @@ else:
                 full_response = st.write_stream(response) if not isinstance(response, str) else response
                 if isinstance(response, str): st.write(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+        st.rerun()
 
     if st.session_state.get("run_report"):
         report_type = st.session_state.report_type_to_generate
@@ -191,6 +196,7 @@ else:
                 full_response = st.write_stream(response) if not isinstance(response, str) else response
                 if isinstance(response, str): st.write(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+        st.rerun()
 
     # Main Q&A chat input
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
@@ -200,6 +206,7 @@ else:
 
         with st.chat_message("assistant", avatar=assistant_avatar):
             response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"], limit=st.session_state.settings["chunk_limit"])
+
             if isinstance(response, str):
                 full_response = response
                 st.write(full_response)
@@ -211,7 +218,6 @@ else:
                 for source in sources:
                     st.markdown(f"- [{source['title']}]({source['url']})")
 
-        message = {"role": "assistant", "content": full_response, "summary": summary}
-        if sources:
-            message["sources"] = sources
+        message = {"role": "assistant", "content": full_response, "summary": summary, "sources": sources}
         st.session_state.messages.append(message)
+        st.rerun()
