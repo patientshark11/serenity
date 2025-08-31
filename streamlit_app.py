@@ -33,6 +33,13 @@ def get_or_create_session_state():
             "openai_model": "gpt-4o",
             "chunk_limit": 5
         }
+    # Flags for triggering analysis tools
+    if "run_timeline" not in st.session_state:
+        st.session_state.run_timeline = False
+    if "run_summary" not in st.session_state:
+        st.session_state.run_summary = False
+    if "run_report" not in st.session_state:
+        st.session_state.run_report = False
 
 get_or_create_session_state()
 
@@ -84,30 +91,23 @@ with st.sidebar:
     st.header("Analysis Tools")
 
     if st.button("📅 Generate Timeline", use_container_width=True, disabled=model_is_unavailable):
-        if connect_to_backend():
-            with st.spinner("Generating timeline... (this may take a moment)"):
-                response_stream = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                full_response = "".join(c for c in response_stream) if not isinstance(response_stream, str) else response_stream
-                st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
-                st.rerun()
+        st.session_state.run_timeline = True
 
-    entity_name = st.text_input("Enter a name to summarize:", key="entity_input_sidebar", disabled=model_is_unavailable)
+    entity_name_input = st.text_input("Enter a name to summarize:", key="entity_input_sidebar", disabled=model_is_unavailable)
     if st.button("👤 Summarize Person", use_container_width=True, disabled=model_is_unavailable):
-        if connect_to_backend() and entity_name:
-            with st.spinner(f"Summarizing {entity_name}... (this may take a moment)"):
-                response_stream = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                full_response = "".join(c for c in response_stream) if not isinstance(response_stream, str) else response_stream
-                st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
-                st.rerun()
+        if entity_name_input:
+            st.session_state.entity_name_to_summarize = entity_name_input
+            st.session_state.run_summary = True
+        else:
+            st.warning("Please enter a name to summarize.")
 
-    report_type = st.selectbox("Select a report:", ["", "Conflict Report", "Legal Communication Summary"], key="report_select_sidebar", disabled=model_is_unavailable)
+    report_type_input = st.selectbox("Select a report:", ["", "Conflict Report", "Legal Communication Summary"], key="report_select_sidebar", disabled=model_is_unavailable)
     if st.button("📄 Generate Report", use_container_width=True, disabled=model_is_unavailable):
-        if connect_to_backend() and report_type:
-            with st.spinner(f"Generating {report_type}... (this may take a moment)"):
-                response_stream = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                full_response = "".join(c for c in response_stream) if not isinstance(response_stream, str) else response_stream
-                st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
-                st.rerun()
+        if report_type_input:
+            st.session_state.report_type_to_generate = report_type_input
+            st.session_state.run_report = True
+        else:
+            st.warning("Please select a report type.")
 
     st.divider()
     st.caption("For best results, re-sync data after code updates.")
@@ -162,28 +162,54 @@ else:
     assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
 
+    # Analysis tool action logic
+    if st.session_state.get("run_timeline"):
+        st.session_state.run_timeline = False
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner("Generating timeline..."):
+                response = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = st.write_stream(response) if not isinstance(response, str) else response
+                if isinstance(response, str): st.write(full_response) # Write error messages
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+
+    if st.session_state.get("run_summary"):
+        entity_name = st.session_state.entity_name_to_summarize
+        st.session_state.run_summary = False
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner(f"Summarizing {entity_name}..."):
+                response = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = st.write_stream(response) if not isinstance(response, str) else response
+                if isinstance(response, str): st.write(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+
+    if st.session_state.get("run_report"):
+        report_type = st.session_state.report_type_to_generate
+        st.session_state.run_report = False
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner(f"Generating {report_type}..."):
+                response = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = st.write_stream(response) if not isinstance(response, str) else response
+                if isinstance(response, str): st.write(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+
+    # Main Q&A chat input
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar=user_avatar):
             st.write(prompt)
 
         with st.chat_message("assistant", avatar=assistant_avatar):
-            with st.spinner("Searching..."):
-                response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"], limit=st.session_state.settings["chunk_limit"])
+            response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"], limit=st.session_state.settings["chunk_limit"])
+            if isinstance(response, str):
+                full_response = response
+                st.write(full_response)
+            else:
+                full_response = st.write_stream(response)
 
-                if isinstance(response, str):
-                    full_response = response
-                    st.write(full_response)
-                else:
-                    full_response = st.write_stream(response)
-
-                pdf_bytes = backend.create_pdf(full_response)
-                st.download_button("Export as PDF", bytes(pdf_bytes), "answer.pdf", "application/pdf")
-
-                if sources:
-                    st.caption("Sources:")
-                    for source in sources:
-                        st.markdown(f"- [{source['title']}]({source['url']})")
+            if sources:
+                st.caption("Sources:")
+                for source in sources:
+                    st.markdown(f"- [{source['title']}]({source['url']})")
 
         message = {"role": "assistant", "content": full_response, "summary": summary}
         if sources:
