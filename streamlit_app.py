@@ -61,7 +61,7 @@ with st.sidebar:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
-        st.image(logo_path, width=100)
+        st.image(logo_path, width=150)
 
     with st.expander("⚙️ Settings"):
         st.session_state.settings["chunk_size"] = st.slider(
