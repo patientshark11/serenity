@@ -54,10 +54,12 @@ def main():
 
     key_people = ["Kim", "Diego", "Kim's family/friends", "YWCA Staff", "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"]
     for person in key_people:
+        # The key for the dictionary should be the original name
         reports_to_generate[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(p, weaviate_client, openai_client)
 
     for name, generator_func in reports_to_generate.items():
-        print(f"Generating report: '{name}'...")
+        sanitized_name = backend.sanitize_name(name)
+        print(f"Generating report: '{name}' (Sanitized: '{sanitized_name}')...")
         try:
             # The generator functions return a stream, so we consume it to get the full text
             response_stream = generator_func()
@@ -69,13 +71,13 @@ def main():
             if "error" in report_content.lower() or "could not find" in report_content.lower():
                  print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
 
-            # Upsert the report into Airtable
+            # Upsert the report into Airtable using the sanitized name
             record_to_save = {
                 "Content": report_content,
                 "LastGenerated": datetime.now().isoformat()
             }
-            reports_table.upsert([{"ReportName": name}], record_to_save, key_fields=["ReportName"])
-            print(f"Successfully generated and saved report: '{name}'")
+            reports_table.upsert([{"ReportName": sanitized_name}], record_to_save, key_fields=["ReportName"])
+            print(f"Successfully generated and saved report for '{name}'")
         except Exception as e:
             print(f"ERROR: Failed to generate or save report for '{name}'. Error: {e}", file=sys.stderr)
 

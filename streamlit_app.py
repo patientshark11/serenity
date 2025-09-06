@@ -150,37 +150,38 @@ else:
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
 
     # Analysis tool action logic
+    def display_fetched_report(report_name, summary_text):
+        """Helper to fetch, display, and store a pre-generated report."""
+        # This function should not be called if the backend isn't ready
+        if not connect_to_backend(): return
+
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner(f"Fetching {summary_text}..."):
+                # Sanitize the name before fetching to match the stored name
+                sanitized_name = backend.sanitize_name(report_name)
+                report_content = backend.fetch_report(sanitized_name)
+                st.write(report_content)
+
+        # Add the report to the chat history
+        st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": summary_text})
+        # Rerun to clear the trigger and display the new message cleanly
+        st.rerun()
+
     if st.session_state.get("run_timeline"):
         st.session_state.run_timeline = False
-        st.rerun()
-        with st.chat_message("assistant", avatar=assistant_avatar):
-            with st.spinner("Generating timeline..."):
-                response = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                full_response = st.write_stream(response) if not isinstance(response, str) else response
-                if isinstance(response, str): st.write(full_response)
-        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+        display_fetched_report("Timeline", "Timeline of events")
 
     if st.session_state.get("run_summary"):
         entity_name = st.session_state.entity_name_to_summarize
         st.session_state.run_summary = False
-        st.rerun()
-        with st.chat_message("assistant", avatar=assistant_avatar):
-            with st.spinner(f"Summarizing {entity_name}..."):
-                response = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                full_response = st.write_stream(response) if not isinstance(response, str) else response
-                if isinstance(response, str): st.write(full_response)
-        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+        # Construct the report name exactly as it's created in sync_airtable.py
+        report_name = f"Summary for {entity_name}"
+        display_fetched_report(report_name, f"Summary for {entity_name}")
 
     if st.session_state.get("run_report"):
         report_type = st.session_state.report_type_to_generate
         st.session_state.run_report = False
-        st.rerun()
-        with st.chat_message("assistant", avatar=assistant_avatar):
-            with st.spinner(f"Generating {report_type}..."):
-                response = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-                full_response = st.write_stream(response) if not isinstance(response, str) else response
-                if isinstance(response, str): st.write(full_response)
-        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+        display_fetched_report(report_type, f"{report_type}")
 
     # Main Q&A chat input
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
