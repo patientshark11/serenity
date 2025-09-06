@@ -253,8 +253,9 @@ def fetch_report(report_name):
     logging.info(f"Fetching pre-generated report: {report_name}")
     try:
         reports_table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], "GeneratedReports")
-        # Use a formula to find the specific report by name
-        formula = f"{{ReportName}} = '{report_name}'"
+        # Sanitize the report_name to escape single quotes for the formula
+        sanitized_name = report_name.replace("'", "\\'")
+        formula = f"{{ReportName}} = '{sanitized_name}'"
         record = reports_table.first(formula=formula)
 
         if record and "Content" in record["fields"]:
