@@ -29,9 +29,14 @@ def get_or_create_session_state():
         st.session_state.openai_client = None
     if "settings" not in st.session_state:
         st.session_state.settings = {
-            "openai_model": "gpt-4o",
-            "chunk_limit": 5
+            "openai_model": "gpt-4o"
         }
+    if "run_timeline" not in st.session_state:
+        st.session_state.run_timeline = False
+    if "run_summary" not in st.session_state:
+        st.session_state.run_summary = False
+    if "run_report" not in st.session_state:
+        st.session_state.run_report = False
 
 get_or_create_session_state()
 
@@ -69,11 +74,6 @@ with st.sidebar:
                 "OpenAI Model", models, index=models.index(st.session_state.settings["openai_model"]),
                 help="Select the AI model. `gpt-4o` is the latest and most capable."
             )
-        st.session_state.settings["chunk_limit"] = st.slider(
-            "Number of Sources to Retrieve", min_value=1, max_value=10,
-            value=st.session_state.settings.get("chunk_limit", 5), step=1,
-            help="Number of text chunks to use as context."
-        )
 
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
     if model_is_unavailable:
@@ -83,26 +83,18 @@ with st.sidebar:
     st.header("Pre-Generated Reports")
 
     if st.button("📅 View Timeline", use_container_width=True, disabled=model_is_unavailable):
-        with st.spinner("Fetching timeline..."):
-            report_content = backend.fetch_report("Timeline")
-            st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": "Retrieved the daily timeline."})
-            st.rerun()
+        st.session_state.run_timeline = True
 
     key_people = ["", "Kim", "Diego", "Kim's family/friends", "YWCA Staff", "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"]
     person_to_summarize = st.selectbox("Select a person to summarize:", key_people, disabled=model_is_unavailable)
     if person_to_summarize:
-        with st.spinner(f"Fetching summary for {person_to_summarize}..."):
-            report_name = f"Summary for {person_to_summarize}"
-            report_content = backend.fetch_report(report_name)
-            st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": f"Retrieved summary for {person_to_summarize}."})
-            st.rerun()
+        st.session_state.entity_name_to_summarize = person_to_summarize
+        st.session_state.run_summary = True
 
     report_type_input = st.selectbox("Select a report:", ["", "Conflict Report", "Legal Communication Summary"], key="report_select_sidebar", disabled=model_is_unavailable)
     if report_type_input:
-        with st.spinner(f"Fetching {report_type_input}..."):
-            report_content = backend.fetch_report(report_type_input)
-            st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": f"Retrieved {report_type_input}."})
-            st.rerun()
+        st.session_state.report_type_to_generate = report_type_input
+        st.session_state.run_report = True
 
     st.divider()
     st.caption("Reports are generated daily. Use this to force an immediate update.")
@@ -110,7 +102,6 @@ with st.sidebar:
         if connect_to_backend():
             with st.spinner("Syncing data and generating new reports... (this may take several minutes)"):
                 try:
-                    # This now runs the full sync and report generation script
                     os.system("python sync_airtable.py")
                     st.toast("Data sync and report generation complete!", icon="✅")
                 except Exception as e:
@@ -158,13 +149,47 @@ else:
     assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
 
+    # Analysis tool action logic
+    if st.session_state.get("run_timeline"):
+        st.session_state.run_timeline = False
+        st.rerun()
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner("Generating timeline..."):
+                response = backend.generate_timeline(st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = st.write_stream(response) if not isinstance(response, str) else response
+                if isinstance(response, str): st.write(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": "Generated a timeline of events."})
+
+    if st.session_state.get("run_summary"):
+        entity_name = st.session_state.entity_name_to_summarize
+        st.session_state.run_summary = False
+        st.rerun()
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner(f"Summarizing {entity_name}..."):
+                response = backend.summarize_entity(entity_name, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = st.write_stream(response) if not isinstance(response, str) else response
+                if isinstance(response, str): st.write(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a summary for {entity_name}."})
+
+    if st.session_state.get("run_report"):
+        report_type = st.session_state.report_type_to_generate
+        st.session_state.run_report = False
+        st.rerun()
+        with st.chat_message("assistant", avatar=assistant_avatar):
+            with st.spinner(f"Generating {report_type}..."):
+                response = backend.generate_report(report_type, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+                full_response = st.write_stream(response) if not isinstance(response, str) else response
+                if isinstance(response, str): st.write(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "summary": f"Generated a {report_type}."})
+
+    # Main Q&A chat input
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar=user_avatar):
             st.write(prompt)
 
         with st.chat_message("assistant", avatar=assistant_avatar):
-            response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"], limit=st.session_state.settings["chunk_limit"])
+            response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
 
             if isinstance(response, str):
                 full_response = response
