@@ -248,3 +248,21 @@ def create_pdf(text_content, summary=None, sources=None):
     except Exception as e:
         logging.error("An unexpected error occurred during PDF creation.", exc_info=True)
         return b""
+
+def fetch_report(report_name):
+    logging.info(f"Fetching pre-generated report: {report_name}")
+    try:
+        reports_table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], "GeneratedReports")
+        # Use a formula to find the specific report by name
+        formula = f"{{ReportName}} = '{report_name}'"
+        record = reports_table.first(formula=formula)
+
+        if record and "Content" in record["fields"]:
+            logging.info(f"Successfully fetched report: {report_name}")
+            return record["fields"]["Content"]
+        else:
+            logging.warning(f"Report not found in Airtable: {report_name}")
+            return f"The report '{report_name}' has not been generated yet. Please wait for the next scheduled run or trigger a manual sync."
+    except Exception as e:
+        logging.error(f"An error occurred while fetching report '{report_name}'.", exc_info=True)
+        return "An error occurred while trying to fetch the report from Airtable."
