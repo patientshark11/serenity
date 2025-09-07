@@ -30,8 +30,8 @@ def connect_to_weaviate():
 def get_embedding(text, openai_client):
     """Generates an embedding for a given text using OpenAI."""
     model_name = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
-    response = openai_client.embeddings.create(input=[text.replace("
-", " ")], model=model_name)
+    # Corrected line:
+    response = openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
     return response.data[0].embedding
 
 def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000):
@@ -61,7 +61,6 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
             summary_title = fields.get("Summary Title", "Untitled Source")
             if not full_content: continue
             
-            # Simple text splitting for now, can be improved later
             chunks = (lambda text, n: [text[i:i+n] for i in range(0, len(text), n)])(full_content, chunk_size)
             
             for chunk in chunks:
@@ -73,16 +72,9 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
     return "Sync successful!"
 
 def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
-    """
-    Performs a search using the HyDE technique.
-    1. Generates a hypothetical answer to the user's query.
-    2. Embeds the hypothetical answer to get a vector.
-    3. Searches Weaviate for documents similar to that vector.
-    4. Generates a final answer based on the retrieved documents.
-    """
+    """Performs a search using the HyDE technique."""
     logging.info(f"Performing HyDE search for query: {query}")
     
-    # 1. Generate a hypothetical answer
     hyde_prompt = f"Write a detailed, factual paragraph that directly answers the following question. Do not say 'this is a hypothetical answer' or similar. Just provide the answer as if it were an excerpt from a definitive source.\n\nQuestion: {query}\n\nAnswer:"
     try:
         response = openai_client.chat.completions.create(
@@ -95,10 +87,8 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
         logging.error(f"Failed to generate hypothetical answer: {e}. Falling back to original query.")
         hypothetical_answer = query
 
-    # 2. Embed the hypothetical answer
     query_vector = get_embedding(hypothetical_answer, openai_client)
     
-    # 3. Search Weaviate
     collection = weaviate_client.collections.get("CustodyDocs")
     response = collection.query.near_vector(
         near_vector=query_vector,
@@ -110,7 +100,6 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
     if not results:
         return "I couldn't find a relevant answer in the documentation.", [], ""
 
-    # 4. Generate the final answer
     context = "\n---\n".join([obj.properties["chunk_content"] for obj in results])
     final_prompt = f"Based ONLY on the following context, please provide a comprehensive answer to the user's original question.\n\nContext:\n{context}\n\nOriginal Question: {query}\n\nAnswer:"
     
@@ -129,7 +118,7 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
 
 def sanitize_name(name):
     """Removes characters that are problematic for API calls or filenames."""
-    return re.sub(r"[/'\"]", "", name)
+    return re.sub(r"[/'\\"]", "", name)
 
 def create_pdf(text_content, summary=None, sources=None):
     """Generates a PDF from text content, an optional summary, and a list of sources."""
@@ -171,7 +160,6 @@ def create_pdf(text_content, summary=None, sources=None):
 def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model="gpt-4", entity_name=None):
     """
     A generic map-reduce framework for querying Weaviate, processing chunks, and summarizing.
-    If an entity_name is provided, it performs a targeted search. Otherwise, it iterates through all docs.
     """
     collection_name = "CustodyDocs"
     if not weaviate_client.collections.exists(collection_name):
