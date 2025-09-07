@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import backend
 import openai
+import uuid # Import uuid for unique keys
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -60,7 +61,7 @@ with st.sidebar:
     with col2:
         logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
         st.image(logo_path, width=150)
-
+    
     with st.expander("⚙️ Settings"):
         env_model = os.environ.get("OPENAI_COMPLETION_MODEL")
         if env_model:
@@ -84,7 +85,7 @@ with st.sidebar:
 
     if st.button("📅 View Timeline", use_container_width=True, disabled=model_is_unavailable):
         st.session_state.run_timeline = True
-
+    
     key_people = ["", "Kim", "Diego", "Kim's family/friends", "YWCA Staff", "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"]
     person_to_summarize = st.selectbox("Select a person to summarize:", key_people, disabled=model_is_unavailable)
     if person_to_summarize:
@@ -102,11 +103,11 @@ with st.sidebar:
         if connect_to_backend():
             with st.spinner("Syncing data and generating new reports... (this may take several minutes)"):
                 try:
-                    os.system("python sync_airtable.py")
+                    os.system("python sync_airtable.py") 
                     st.toast("Data sync and report generation complete!", icon="✅")
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
-
+    
     st.divider()
     st.title("Chat History")
     if st.session_state.messages:
@@ -125,8 +126,8 @@ st.title("Custody Documentation Q&A")
 
 # Display prior chat messages
 for message in st.session_state.messages:
-    user_avatar = "https://ui-avatars.com/api/?name=Question&background=F0F2F6&color=0F172A"
-    assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
+    user_avatar = "https://ui-avatars.com/api/?name=User&background=F0F2F6&color=0F172A"
+    assistant_avatar = "https://ui-avatars.com/api/?name=Assistant&background=5865F2&color=FFF"
     avatar = assistant_avatar if message["role"] == "assistant" else user_avatar
     with st.chat_message(message["role"], avatar=avatar):
         st.write(message["content"])
@@ -134,10 +135,11 @@ for message in st.session_state.messages:
             st.caption("Sources:")
             for source in message["sources"]:
                 st.markdown(f"- [{source['title']}]({source['url']})")
-
+        
         if message["role"] == "assistant":
             pdf_bytes = backend.create_pdf(message["content"], summary=message.get("summary"), sources=message.get("sources"))
-            st.download_button("Export as PDF", bytes(pdf_bytes), f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message['content'][:20]}")
+            # Use the unique message ID for the key
+            st.download_button("Export as PDF", pdf_bytes, f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message['id']}")
 
 # Check for connections before allowing chat
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
@@ -145,53 +147,50 @@ if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AI
 elif not connect_to_backend():
     st.warning("Could not connect to backend services. Please check your configuration and network.")
 else:
-    user_avatar = "https://ui-avatars.com/api/?name=Question&background=F0F2F6&color=0F172A"
-    assistant_avatar = "https://ui-avatars.com/api/?name=Answer&background=5865F2&color=FFF"
+    user_avatar = "https://ui-avatars.com/api/?name=User&background=F0F2F6&color=0F172A"
+    assistant_avatar = "https://ui-avatars.com/api/?name=Assistant&background=5865F2&color=FFF"
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
 
     # Analysis tool action logic
-    def display_fetched_report(report_name, summary_text):
+    def display_fetched_report(sanitized_report_name, summary_text):
         """Helper to fetch, display, and store a pre-generated report."""
-        # This function should not be called if the backend isn't ready
         if not connect_to_backend(): return
 
         with st.chat_message("assistant", avatar=assistant_avatar):
             with st.spinner(f"Fetching {summary_text}..."):
-                # Sanitize the name before fetching to match the stored name
-                sanitized_name = backend.sanitize_name(report_name)
-                report_content = backend.fetch_report(sanitized_name)
+                report_content = backend.fetch_report(sanitized_report_name)
                 st.write(report_content)
-
-        # Add the report to the chat history
-        st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": summary_text})
-        # Rerun to clear the trigger and display the new message cleanly
+        
+        st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": summary_text, "id": str(uuid.uuid4())})
         st.rerun()
 
     if st.session_state.get("run_timeline"):
         st.session_state.run_timeline = False
-        display_fetched_report("Timeline", "Timeline of events")
+        sanitized_name = backend.sanitize_name("Timeline")
+        display_fetched_report(sanitized_name, "Timeline of events")
 
     if st.session_state.get("run_summary"):
         entity_name = st.session_state.entity_name_to_summarize
         st.session_state.run_summary = False
-        # Construct the report name exactly as it's created in sync_airtable.py
         report_name = f"Summary for {entity_name}"
-        display_fetched_report(report_name, f"Summary for {entity_name}")
+        sanitized_name = backend.sanitize_name(report_name)
+        display_fetched_report(sanitized_name, f"Summary for {entity_name}")
 
     if st.session_state.get("run_report"):
         report_type = st.session_state.report_type_to_generate
         st.session_state.run_report = False
-        display_fetched_report(report_type, f"{report_type}")
+        sanitized_name = backend.sanitize_name(report_type)
+        display_fetched_report(sanitized_name, f"{report_type}")
 
     # Main Q&A chat input
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.messages.append({"role": "user", "content": prompt, "id": str(uuid.uuid4())})
         with st.chat_message("user", avatar=user_avatar):
             st.write(prompt)
 
         with st.chat_message("assistant", avatar=assistant_avatar):
             response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
-
+            
             if isinstance(response, str):
                 full_response = response
                 st.write(full_response)
@@ -202,7 +201,7 @@ else:
                 st.caption("Sources:")
                 for source in sources:
                     st.markdown(f"- [{source['title']}]({source['url']})")
-
-        message = {"role": "assistant", "content": full_response, "summary": summary, "sources": sources}
+        
+        message = {"role": "assistant", "content": full_response, "summary": summary, "sources": sources, "id": str(uuid.uuid4())}
         st.session_state.messages.append(message)
         st.rerun()
