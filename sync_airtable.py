@@ -9,7 +9,7 @@ It performs two main tasks:
 """
 import os
 import sys
-import backend  # Import the entire backend
+import backend
 import openai
 from pyairtable import Table
 from datetime import datetime
@@ -18,7 +18,7 @@ def main():
     print("--- Starting nightly job: Data Sync and Report Generation ---")
 
     # --- 1. Initialize Clients ---
-    # We need to manually initialize the clients since we are not in a Streamlit session
+    weaviate_client = None  # Initialize to None
     try:
         weaviate_client = backend.connect_to_weaviate()
         openai_client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -30,12 +30,11 @@ def main():
     # --- 2. Sync Main Data from Airtable to Weaviate ---
     try:
         print("Starting main data sync to Weaviate...")
-        # Using a default chunk size for the background job.
+        # Note: ingest_airtable_to_weaviate is in backend.py
         sync_status = backend.ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
         print(f"Data sync finished. Status: {sync_status}")
     except Exception as e:
         print(f"ERROR: Weaviate data sync failed. Reports will be generated with existing data. Error: {e}", file=sys.stderr)
-        # We continue to report generation even if sync fails, to ensure reports are fresh.
 
     # --- 3. Pre-generate Analysis Reports ---
     print("\nStarting report pre-generation...")
@@ -44,6 +43,8 @@ def main():
         print("Connected to 'GeneratedReports' Airtable table.")
     except Exception as e:
         print(f"FATAL: Could not connect to 'GeneratedReports' table in Airtable. Aborting job. Error: {e}", file=sys.stderr)
+        if weaviate_client and weaviate_client.is_connected():
+            weaviate_client.close()
         sys.exit(1)
 
     reports_to_generate = {
@@ -54,35 +55,34 @@ def main():
 
     key_people = ["Kim", "Diego", "Kim's family/friends", "YWCA Staff", "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"]
     for person in key_people:
-        # The key for the dictionary should be the original name
         reports_to_generate[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(p, weaviate_client, openai_client)
 
     for name, generator_func in reports_to_generate.items():
         sanitized_name = backend.sanitize_name(name)
         print(f"Generating report: '{name}' (Sanitized: '{sanitized_name}')...")
         try:
-            # The generator functions return a stream, so we consume it to get the full text
             response_stream = generator_func()
-            if isinstance(response_stream, str): # Handle error strings from backend
+            if isinstance(response_stream, str):
                 report_content = response_stream
             else:
                 report_content = "".join(c for c in response_stream)
-
+            
             if "error" in report_content.lower() or "could not find" in report_content.lower():
                  print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
 
-            # Upsert the report into Airtable using the sanitized name
             record_to_save = {
+                "ReportName": sanitized_name,
                 "Content": report_content,
                 "LastGenerated": datetime.now().isoformat()
             }
-            reports_table.upsert([{"ReportName": sanitized_name}], record_to_save, key_fields=["ReportName"])
+            reports_table.upsert([record_to_save], key_fields=["ReportName"])
             print(f"Successfully generated and saved report for '{name}'")
         except Exception as e:
             print(f"ERROR: Failed to generate or save report for '{name}'. Error: {e}", file=sys.stderr)
-
+            
     print("\n--- Nightly job finished ---")
-    weaviate_client.close()
+    if weaviate_client and weaviate_client.is_connected():
+        weaviate_client.close()
 
 if __name__ == "__main__":
     main()
