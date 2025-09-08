@@ -75,7 +75,12 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
     """Performs a search using the HyDE technique."""
     logging.info(f"Performing HyDE search for query: {query}")
     
-    hyde_prompt = f"Write a detailed, factual paragraph that directly answers the following question. Do not say 'this is a hypothetical answer' or similar. Just provide the answer as if it were an excerpt from a definitive source.\n\nQuestion: {query}\n\nAnswer:"
+    hyde_prompt = (
+        "Write a detailed, factual paragraph that directly answers the following question. "
+        "Do not say 'this is a hypothetical answer' or similar. "
+        "Just provide the answer as if it were an excerpt from a definitive source.\n\n"
+        f"Question: {query}\n\nAnswer:"
+    )
     try:
         response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -101,7 +106,11 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
         return "I couldn't find a relevant answer in the documentation.", [], ""
 
     context = "\n---\n".join([obj.properties["chunk_content"] for obj in results])
-    final_prompt = f"Based ONLY on the following context, please provide a comprehensive answer to the user's original question.\n\nContext:\n{context}\n\nOriginal Question: {query}\n\nAnswer:"
+    final_prompt = (
+        "Based ONLY on the following context, please provide a comprehensive answer to the user's original question.\n\n"
+        f"Context:\n{context}\n\n"
+        f"Original Question: {query}\n\nAnswer:"
+    )
     
     answer_stream = openai_client.chat.completions.create(
         model=model,
@@ -113,12 +122,12 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
     unique_sources = {s["url"]: s for s in sources_raw}.values()
     sources = list(unique_sources)
     
-    summary = f"Response to: \"{query[:40]}...\""
+    summary = f'Response to: "{query[:40]}..."'
     return answer_stream, sources, summary
 
 def sanitize_name(name):
     """Removes characters that are problematic for API calls or filenames."""
-    return re.sub(r"[/'\\"]", "", name)
+    return re.sub(r"[/'"]", "", name)
 
 def create_pdf(text_content, summary=None, sources=None):
     """Generates a PDF from text content, an optional summary, and a list of sources."""
@@ -158,23 +167,16 @@ def create_pdf(text_content, summary=None, sources=None):
         return b"Error: Could not generate the PDF file."
 
 def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model="gpt-4", entity_name=None):
-    """
-    A generic map-reduce framework for querying Weaviate, processing chunks, and summarizing.
-    """
     collection_name = "CustodyDocs"
     if not weaviate_client.collections.exists(collection_name):
         return "The document collection does not exist. Please run the data sync first."
-
     collection = weaviate_client.collections.get(collection_name)
     
     items_to_process = []
     if entity_name:
         logging.info(f"Starting targeted search for entity: {entity_name}")
         query_vector = get_embedding(entity_name, openai_client)
-        response = collection.query.near_vector(
-            near_vector=query_vector,
-            limit=50
-        )
+        response = collection.query.near_vector(near_vector=query_vector, limit=50)
         items_to_process = response.objects
     else:
         logging.info("Starting full collection iteration...")
@@ -202,7 +204,6 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         return f"Could not find any relevant information for '{entity_name}'." if entity_name else "Could not find any relevant information in the documents."
 
     logging.info(f"MAP step complete. Found {len(mapped_results)} relevant pieces of information.")
-
     logging.info("Starting REDUCE step...")
     combined_text = "\n---\n".join(mapped_results)
     reduce_prompt = reduce_prompt_template.format(combined_text=combined_text, entity_name=entity_name)
@@ -220,78 +221,59 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         return "An error occurred while finalizing the report. Please check the logs."
 
 def generate_timeline(weaviate_client, openai_client, model="gpt-4"):
-    """Generates a chronological timeline of events from the documents."""
     logging.info("Generating timeline...")
-    map_prompt_template = """
-    You are a data extractor. Your task is to find and list any events with specific dates or clear time references (e.g., "last week," "January 2023") from the following text. For each event, provide the date and a brief, neutral description. If no specific events are found, respond with "No relevant information."
-
-    Text:
-    "{chunk_content}"
-    """
-    
-    reduce_prompt_template = """
-    You are a historian. You have been given an unordered list of events extracted from various documents. Your task is to organize these events into a single, coherent, and chronologically sorted timeline.
-    - Merge duplicate or very similar events to create a clean narrative.
-    - Format each event clearly with the date first, followed by the description.
-    - Present the final output in clear Markdown format, using headings for months or years where appropriate.
-
-    Here is the unsorted list of events:
-    ---
-    {combined_text}
-    ---
-    """
-    
+    map_prompt_template = (
+        'Extract any events with specific dates or clear time references (e.g., "yesterday," "last week," "January 2023") '
+        'from the following text. For each event, provide the date and a brief, neutral description. '
+        'If no specific events are found, respond with "No relevant information."\n\n'
+        'Text:\n"{chunk_content}"'
+    )
+    reduce_prompt_template = (
+        'You are a historian. You have been given a list of events extracted from various documents. '
+        'Your task is to organize these events into a single, coherent, and chronologically sorted timeline.\n\n'
+        '- Merge duplicate or very similar events.\n'
+        '- Format each event clearly with the date first, followed by the description.\n'
+        '- Present the final output in clear Markdown format, using headings for months or years where appropriate.\n\n'
+        'Here is the unsorted list of events:\n---\n{combined_text}\n---'
+    )
     return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model)
 
 def summarize_entity(entity_name, weaviate_client, openai_client, model="gpt-4"):
-    """Finds all mentions of a specific person or entity and creates a summary."""
     logging.info(f"Generating summary for entity: {entity_name}...")
-    map_prompt_template = """
-    You are a data extractor. Your task is to read the following text and extract any information, events, or descriptions related to the entity: '{entity_name}'. If the text is not relevant to this entity, respond with "No relevant information."
-
-    Text:
-    "{chunk_content}"
-    """
-    
-    reduce_prompt_template = """
-    You are a biographer. You have been given a collection of notes and mentions about '{entity_name}'. Your task is to synthesize this information into a concise and well-structured summary.
-    - Start with a brief overview of the person or entity.
-    - Organize the information thematically or chronologically, whichever makes more sense.
-    - Merge duplicate information and resolve any minor contradictions to create a coherent narrative.
-    - Present the final output in clear Markdown format.
-
-    Here is the collection of notes:
-    ---
-    {combined_text}
-    ---
-    """
-    
+    map_prompt_template = (
+        "You are a data extractor. Your task is to read the following text and extract any information, events, or descriptions "
+        "related to the entity: '{entity_name}'. If the text is not relevant to this entity, respond with "
+        '"No relevant information."\n\nText:\n"{chunk_content}"'
+    )
+    reduce_prompt_template = (
+        "You are a biographer. You have been given a collection of notes and mentions about '{entity_name}'. "
+        "Your task is to synthesize this information into a concise and well-structured summary.\n\n"
+        "- Start with a brief overview of the person or entity.\n"
+        "- Organize the information thematically or chronologically, whichever makes more sense.\n"
+        "- Merge duplicate information and resolve any minor contradictions to create a coherent narrative.\n"
+        "- Present the final output in clear Markdown format.\n\n"
+        "Here is the collection of notes:\n---\n{combined_text}\n---"
+    )
     return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=entity_name)
 
 def generate_report(report_type, weaviate_client, openai_client, model="gpt-4"):
-    """Generates a specific report type (e.g., "Conflict Report") using the map-reduce framework."""
     logging.info(f"Generating report: {report_type}...")
-    map_prompt_template = """
-    You are a data extractor. Your task is to read the following text and extract any information relevant to the topic of '{entity_name}'. This could include events, statements, conflicts, communications, or other noteworthy details. If the text is not relevant to this topic, respond with "No relevant information."
-
-    Text:
-    "{chunk_content}"
-    """
-    
-    reduce_prompt_template = """
-    You are a professional analyst. You have been given a collection of notes and information related to the topic of '{entity_name}'. Your task is to synthesize this information into a comprehensive and well-structured report.
-    - Start with a clear introduction that defines the scope and purpose of the report.
-    - Organize the information into logical sections with clear Markdown headings.
-    - Provide a balanced and objective analysis based *only* on the information provided.
-    - Conclude with a summary of the key findings.
-    - Do not invent or infer information not present in the provided text.
-
-    Here is the collection of information:
-    ---
-    {combined_text}
-    ---
-    """
-    
+    map_prompt_template = (
+        "You are a data extractor. Your task is to read the following text and extract any information relevant to the topic of "
+        "'{entity_name}'. This could include events, statements, conflicts, communications, or other noteworthy details. "
+        'If the text is not relevant to this topic, respond with "No relevant information."\n\n'
+        'Text:\n"{chunk_content}"'
+    )
+    reduce_prompt_template = (
+        "You are a professional analyst. You have been given a collection of notes and information related to the topic of '{entity_name}'. "
+        "Your task is to synthesize this information into a comprehensive and well-structured report.\n\n"
+        "- Start with a clear introduction that defines the scope and purpose of the report.\n"
+        "- Organize the information into logical sections with clear Markdown headings.\n"
+        "- Provide a balanced and objective analysis based *only* on the information provided.\n"
+        "- Conclude with a summary of the key findings.\n"
+        "- Do not invent or infer information not present in the provided text.\n\n"
+        "Here is the collection of information:\n---\n{combined_text}\n---"
+    )
     return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=report_type)
 
 def fetch_report(report_name):
