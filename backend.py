@@ -159,7 +159,11 @@ def create_pdf(text_content, summary=None, sources=None):
                 pdf.ln(5)
             pdf.set_text_color(0, 0, 0)
 
-        pdf_bytes = pdf.output()
+        # Return the generated PDF as bytes to ensure compatibility with
+        # consumers like Streamlit's download_button, which expects a bytes-like
+        # object. FPDF's output() returns a string when using dest="S", so we
+        # encode it using latin-1 to get the raw PDF byte content.
+        pdf_bytes = pdf.output(dest="S").encode("latin-1")
         logging.info("PDF generation successful.")
         return pdf_bytes
     except Exception as e:
