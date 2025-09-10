@@ -30,7 +30,6 @@ def connect_to_weaviate():
 def get_embedding(text, openai_client):
     """Generates an embedding for a given text using OpenAI."""
     model_name = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
-    # Corrected line:
     response = openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
     return response.data[0].embedding
 
@@ -127,7 +126,8 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
 
 def sanitize_name(name):
     """Removes characters that are problematic for API calls or filenames."""
-    return re.sub(r"[/'"]", "", name)
+    # Corrected line:
+    return re.sub(r"[/'\"]", "", name)
 
 def create_pdf(text_content, summary=None, sources=None):
     """Generates a PDF from text content, an optional summary, and a list of sources."""
