@@ -13,8 +13,8 @@ if __name__ == "__main__":
     try:
         weaviate_client = backend.connect_to_weaviate()
         openai_client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        res = backend.ingest_airtable_to_weaviate(weaviate_client, openai_client)
-        print({"status": "ok", "result": res})
+        result = backend.ingest_airtable_to_weaviate(weaviate_client, openai_client)
+        print({"status": "ok", "result": result})
     except Exception as e:
         print({"status": "error", "error": str(e)}, file=sys.stderr)
         exit_code = 1
