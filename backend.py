@@ -2,6 +2,7 @@ import os
 import weaviate
 import openai
 from pyairtable import Table
+from pyairtable.formulas import match
 import uuid
 import re
 import logging
@@ -281,9 +282,8 @@ def fetch_report(report_name):
     logging.info(f"Fetching pre-generated report: '{report_name}'")
     try:
         reports_table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], "GeneratedReports")
-        escaped_name = report_name.replace("'", "\\'")
-        formula = f"{{ReportName}} = '{escaped_name}'"
-        
+        formula = match({"ReportName": report_name})
+
         records = reports_table.all(formula=formula, max_records=1)
         
         if records and 'Content' in records[0]['fields']:
