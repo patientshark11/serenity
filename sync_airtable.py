@@ -9,6 +9,7 @@ import openai
 
 if __name__ == "__main__":
     weaviate_client = None
+    exit_code = 0
     try:
         weaviate_client = backend.connect_to_weaviate()
         openai_client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -16,8 +17,8 @@ if __name__ == "__main__":
         print({"status": "ok", "result": result})
     except Exception as e:
         print({"status": "error", "error": str(e)}, file=sys.stderr)
-        sys.exit(1)
+        exit_code = 1
     finally:
-        if weaviate_client and weaviate_client.is_connected():
+        if weaviate_client and hasattr(weaviate_client, "close"):
             weaviate_client.close()
-    sys.exit(0)
+    sys.exit(exit_code)

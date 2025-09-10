@@ -30,6 +30,7 @@ def _chunk_text(text: str, size: int) -> list[str]:
     """Split text into chunks of given size."""
     return [text[i:i + size] for i in range(0, len(text), size)]
 
+
 def connect_to_weaviate():
     """Establishes a connection to the Weaviate instance."""
     try:
@@ -42,6 +43,7 @@ def connect_to_weaviate():
     except Exception as e:
         logger.error(f"Failed to connect to Weaviate: {e}")
         raise
+
 
 def get_embedding(text, openai_client):
     """Generates an embedding for a given text using OpenAI."""
@@ -56,14 +58,14 @@ def get_embedding(text, openai_client):
         logger.error(f"Embedding generation failed: {e}")
         raise
 
+
 def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000):
     """Ingests data from Airtable into Weaviate, creating a new schema."""
     collection_name = "CustodyDocs"
-    logging.info(f"Starting Airtable ingestion process for collection '{collection_name}'.")
     logger.info(f"Starting Airtable ingestion process for collection '{collection_name}'.")
     if weaviate_client.collections.exists(collection_name):
         weaviate_client.collections.delete(collection_name)
-    
+
     custody_docs = weaviate_client.collections.create(
         name=collection_name,
         vectorizer_config=Configure.Vectorizer.none(),
@@ -101,10 +103,11 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
                 }
                 batch.add_object(properties=data_obj, vector=emb)
 
-        if batch.number_errors > 0:
-            logger.error(f"Batch import finished with {batch.number_errors} errors.")
-
+    # Check after the batch context finishes
+    if batch.number_errors > 0:
+        logger.error(f"Batch import finished with {batch.number_errors} errors.")
     return "Sync successful!"
+
 
 def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde_model="gpt-3.5-turbo"):
     """Performs a search using the HyDE technique."""
@@ -119,7 +122,10 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
     try:
         response = openai_client.chat.completions.create(
             model=hyde_model,
-            messages=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": hyde_prompt}]
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": hyde_prompt},
+            ],
         )
         hypothetical_answer = response.choices[0].message.content
         logger.info(f"Generated hypothetical answer: {hypothetical_answer[:100]}...")
@@ -128,7 +134,6 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
         hypothetical_answer = query
 
     query_vector = get_embedding(hypothetical_answer, openai_client)
-    
 
     if not weaviate_client.collections.exists("CustodyDocs"):
         return None, [], "The document collection does not exist. Please run the data sync first."
@@ -140,10 +145,9 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
         return_properties=["chunk_content", "primary_source_content", "summary_title"]
     )
     results = response.objects
-    
 
     if not results:
-        return "I couldn't find a relevant answer in the documentation.", [], ""
+        return None, [], "I couldn't find a relevant answer in the documentation."
 
     context = "\n---\n".join([obj.properties["chunk_content"] for obj in results])
     final_prompt = (
@@ -151,28 +155,30 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
         f"Context:\n{context}\n\n"
         f"Original Question: {query}\n\nAnswer:"
     )
-    
+
     answer_stream = openai_client.chat.completions.create(
         model=model,
-        messages=[{"role": "system", "content": "You are a helpful assistant that answers questions based on provided context."}, {"role": "user", "content": final_prompt}],
+        messages=[{"role": "system", "content": "You are a helpful assistant that answers questions based on provided context."},
+                  {"role": "user", "content": final_prompt}],
         stream=True
     )
-    
-    sources_raw = [{"title": obj.properties.get("summary_title"), "url": obj.properties.get("primary_source_content")} for obj in results if obj.properties.get("primary_source_content")]
+
+    sources_raw = [{"title": obj.properties.get("summary_title"), "url": obj.properties.get("primary_source_content")}
+                   for obj in results if obj.properties.get("primary_source_content")]
     unique_sources = {s["url"]: s for s in sources_raw}.values()
     sources = list(unique_sources)
-    
+
     summary = f'Response to: "{query[:40]}..."'
     return answer_stream, sources, summary
 
+
 def sanitize_name(name):
     """Removes characters that are problematic for API calls or filenames."""
-    # Corrected line:
     return re.sub(r"[/'\"]", "", name)
+
 
 def create_pdf(text_content, summary=None, sources=None):
     """Generates a PDF from text content, an optional summary, and a list of sources."""
-    logging.info("Generating PDF report...")
     logger.info("Generating PDF report...")
     try:
         pdf = FPDF()
@@ -201,36 +207,30 @@ def create_pdf(text_content, summary=None, sources=None):
                 pdf.ln(5)
             pdf.set_text_color(0, 0, 0)
 
-        pdf_bytes = pdf.output()
-        logging.info("PDF generation successful.")
         pdf_bytes = pdf.output(dest="S").encode("latin-1")
         logger.info("PDF generation successful.")
         return pdf_bytes
     except Exception as e:
-        logging.error("Failed to generate PDF.", exc_info=True)
         logger.error("Failed to generate PDF.", exc_info=True)
         return b"Error: Could not generate the PDF file."
+
 
 def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model="gpt-4", entity_name=None):
     collection_name = "CustodyDocs"
     if not weaviate_client.collections.exists(collection_name):
         return "The document collection does not exist. Please run the data sync first."
     collection = weaviate_client.collections.get(collection_name)
-    
-    items_to_process = []
+
     if entity_name:
-        logging.info(f"Starting targeted search for entity: {entity_name}")
         logger.info(f"Starting targeted search for entity: {entity_name}")
         query_vector = get_embedding(entity_name, openai_client)
         response = collection.query.near_vector(near_vector=query_vector, limit=50)
         items_to_process = response.objects
     else:
-        logging.info("Starting full collection iteration...")
         logger.info("Starting full collection iteration...")
         items_to_process = collection.iterator()
 
     mapped_results = []
-    logging.info("Starting MAP step...")
     logger.info("Starting MAP step...")
     for item in items_to_process:
         chunk_content = item.properties['chunk_content']
@@ -238,22 +238,20 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         try:
             response = openai_client.chat.completions.create(
                 model=model,
-                messages=[{"role": "system", "content": "You are an expert data extractor."}, {"role": "user", "content": map_prompt}],
+                messages=[{"role": "system", "content": "You are an expert data extractor."},
+                          {"role": "user", "content": map_prompt}],
                 timeout=30
             )
             extracted_info = response.choices[0].message.content
             if extracted_info and "no relevant information" not in extracted_info.lower():
                 mapped_results.append(extracted_info)
         except Exception as e:
-            logging.warning(f"Skipping a chunk due to an error during map stage: {e}")
             logger.warning(f"Skipping a chunk due to an error during map stage: {e}")
             continue
-    
+
     if not mapped_results:
         return f"Could not find any relevant information for '{entity_name}'." if entity_name else "Could not find any relevant information in the documents."
 
-    logging.info(f"MAP step complete. Found {len(mapped_results)} relevant pieces of information.")
-    logging.info("Starting REDUCE step...")
     logger.info(f"MAP step complete. Found {len(mapped_results)} relevant pieces of information.")
     logger.info("Starting REDUCE step...")
     combined_text = "\n---\n".join(mapped_results)
@@ -262,19 +260,18 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
     try:
         response_stream = openai_client.chat.completions.create(
             model=model,
-            messages=[{"role": "system", "content": "You are an expert report writer that responds in Markdown."}, {"role": "user", "content": reduce_prompt}],
+            messages=[{"role": "system", "content": "You are an expert report writer that responds in Markdown."},
+                      {"role": "user", "content": reduce_prompt}],
             stream=True
         )
-        logging.info("REDUCE step complete. Streaming final report.")
         logger.info("REDUCE step complete. Streaming final report.")
         return response_stream
     except Exception as e:
-        logging.error(f"Error during REDUCE step: {e}")
         logger.error(f"Error during REDUCE step: {e}")
         return "An error occurred while finalizing the report. Please check the logs."
 
+
 def generate_timeline(weaviate_client, openai_client, model="gpt-4"):
-    logging.info("Generating timeline...")
     logger.info("Generating timeline...")
     map_prompt_template = (
         'Extract any events with specific dates or clear time references (e.g., "yesterday," "last week," "January 2023") '
@@ -292,8 +289,8 @@ def generate_timeline(weaviate_client, openai_client, model="gpt-4"):
     )
     return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model)
 
+
 def summarize_entity(entity_name, weaviate_client, openai_client, model="gpt-4"):
-    logging.info(f"Generating summary for entity: {entity_name}...")
     logger.info(f"Generating summary for entity: {entity_name}...")
     map_prompt_template = (
         "You are a data extractor. Your task is to read the following text and extract any information, events, or descriptions "
@@ -311,8 +308,8 @@ def summarize_entity(entity_name, weaviate_client, openai_client, model="gpt-4")
     )
     return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=entity_name)
 
+
 def generate_report(report_type, weaviate_client, openai_client, model="gpt-4"):
-    logging.info(f"Generating report: {report_type}...")
     logger.info(f"Generating report: {report_type}...")
     map_prompt_template = (
         "You are a data extractor. Your task is to read the following text and extract any information relevant to the topic of "
@@ -332,6 +329,7 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4"):
     )
     return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=report_type)
 
+
 def fetch_report(report_name):
     """Fetches the content of a pre-generated report from the 'GeneratedReports' table in Airtable."""
     logger.info(f"Fetching pre-generated report: '{report_name}'")
@@ -347,12 +345,13 @@ def fetch_report(report_name):
         if records and "Content" in records[0]["fields"]:
             logger.info(f"Successfully fetched report: '{report_name}'")
             return records[0]["fields"]["Content"]
+        else:
+            logger.warning(f"Report not found in Airtable: '{report_name}'")
+            return (
+                f"Could not find a pre-generated report named '{report_name}'. It might still be generating or it may have failed to create."
+            )
 
-        logger.warning(f"Report not found in Airtable: '{report_name}'")
-        return (
-            f"Could not find a pre-generated report named '{report_name}'. It might still be generating or it may have failed to create."
-        )
-    except Exception:
+    except Exception as e:
         logger.error(
             f"An error occurred while fetching report '{report_name}' from Airtable.",
             exc_info=True,
