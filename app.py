@@ -8,8 +8,8 @@ import uuid # Import uuid for unique keys
 st.set_page_config(
     page_title="Project Serenity Q&A",
     page_icon="⚖️",
-    layout="centered",
-    initial_sidebar_state="auto"
+    layout="centered", # Centered layout with a clean sidebar feels modern
+    initial_sidebar_state="expanded"
 )
 
 # --- 2. CUSTOM CSS ---
@@ -140,7 +140,7 @@ for message in st.session_state.messages:
         if message["role"] == "assistant":
             pdf_bytes = backend.create_pdf(message["content"], summary=message.get("summary"), sources=message.get("sources"))
             # Use the unique message ID for the key and remove the incorrect bytes() wrapper
-            st.download_button("Export as PDF", pdf_bytes, f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message['id']}")
+            st.download_button("Export as PDF", pdf_bytes, f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message.get('id', str(uuid.uuid4()))}")
 
 # Check for connections before allowing chat
 if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
@@ -190,18 +190,25 @@ else:
             st.write(prompt)
 
         with st.chat_message("assistant", avatar=assistant_avatar):
-            response, sources, summary = backend.generative_search(prompt, st.session_state.weaviate_client, st.session_state.openai_client, model=st.session_state.settings["openai_model"])
+            with st.spinner("Thinking..."):
+                # Call the new HyDE search function from the backend
+                response, sources, summary = backend.generative_search(
+                    prompt,
+                    st.session_state.weaviate_client,
+                    st.session_state.openai_client,
+                    model=st.session_state.settings["openai_model"]
+                )
 
-            if isinstance(response, str):
-                full_response = response
-                st.write(full_response)
-            else:
-                full_response = st.write_stream(response)
+                if isinstance(response, str):
+                    full_response = response
+                    st.write(full_response)
+                else:
+                    full_response = st.write_stream(response)
 
-            if sources:
-                st.caption("Sources:")
-                for source in sources:
-                    st.markdown(f"- [{source['title']}]({source['url']})")
+                if sources:
+                    st.caption("Sources:")
+                    for source in sources:
+                        st.markdown(f"- [{source['title']}]({source['url']})")
 
         message = {"role": "assistant", "content": full_response, "summary": summary, "sources": sources, "id": str(uuid.uuid4())}
         st.session_state.messages.append(message)
