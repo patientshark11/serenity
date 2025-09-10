@@ -2,13 +2,10 @@ import os
 import weaviate
 import openai
 from pyairtable import Table
-import uuid
 from pyairtable.formulas import match
 import re
 import logging
-import json
 from fpdf import FPDF
-from io import BytesIO
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.init import Auth
 
@@ -158,13 +155,17 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
 
     answer_stream = openai_client.chat.completions.create(
         model=model,
-        messages=[{"role": "system", "content": "You are a helpful assistant that answers questions based on provided context."},
-                  {"role": "user", "content": final_prompt}],
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that answers questions based on provided context."},
+            {"role": "user", "content": final_prompt}
+        ],
         stream=True
     )
 
-    sources_raw = [{"title": obj.properties.get("summary_title"), "url": obj.properties.get("primary_source_content")}
-                   for obj in results if obj.properties.get("primary_source_content")]
+    sources_raw = [
+        {"title": obj.properties.get("summary_title"), "url": obj.properties.get("primary_source_content")}
+        for obj in results if obj.properties.get("primary_source_content")
+    ]
     unique_sources = {s["url"]: s for s in sources_raw}.values()
     sources = list(unique_sources)
 
@@ -210,7 +211,7 @@ def create_pdf(text_content, summary=None, sources=None):
         pdf_bytes = pdf.output(dest="S").encode("latin-1")
         logger.info("PDF generation successful.")
         return pdf_bytes
-    except Exception as e:
+    except Exception:
         logger.error("Failed to generate PDF.", exc_info=True)
         return b"Error: Could not generate the PDF file."
 
@@ -238,8 +239,10 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         try:
             response = openai_client.chat.completions.create(
                 model=model,
-                messages=[{"role": "system", "content": "You are an expert data extractor."},
-                          {"role": "user", "content": map_prompt}],
+                messages=[
+                    {"role": "system", "content": "You are an expert data extractor."},
+                    {"role": "user", "content": map_prompt}
+                ],
                 timeout=30
             )
             extracted_info = response.choices[0].message.content
@@ -250,7 +253,8 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
             continue
 
     if not mapped_results:
-        return f"Could not find any relevant information for '{entity_name}'." if entity_name else "Could not find any relevant information in the documents."
+        return (f"Could not find any relevant information for '{entity_name}'."
+                if entity_name else "Could not find any relevant information in the documents.")
 
     logger.info(f"MAP step complete. Found {len(mapped_results)} relevant pieces of information.")
     logger.info("Starting REDUCE step...")
@@ -260,8 +264,10 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
     try:
         response_stream = openai_client.chat.completions.create(
             model=model,
-            messages=[{"role": "system", "content": "You are an expert report writer that responds in Markdown."},
-                      {"role": "user", "content": reduce_prompt}],
+            messages=[
+                {"role": "system", "content": "You are an expert report writer that responds in Markdown."},
+                {"role": "user", "content": reduce_prompt}
+            ],
             stream=True
         )
         logger.info("REDUCE step complete. Streaming final report.")
