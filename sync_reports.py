@@ -30,7 +30,6 @@ def main():
     # --- 2. Sync Main Data from Airtable to Weaviate ---
     try:
         print("Starting main data sync to Weaviate...")
-        # Note: ingest_airtable_to_weaviate is in backend.py
         sync_status = backend.ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
         print(f"Data sync finished. Status: {sync_status}")
     except Exception as e:
@@ -66,7 +65,7 @@ def main():
                 report_content = response_stream
             else:
                 report_content = "".join(c for c in response_stream)
-
+            
             if "error" in report_content.lower() or "could not find" in report_content.lower():
                  print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
 
@@ -79,7 +78,7 @@ def main():
             print(f"Successfully generated and saved report for '{name}'")
         except Exception as e:
             print(f"ERROR: Failed to generate or save report for '{name}'. Error: {e}", file=sys.stderr)
-
+            
     print("\n--- Nightly job finished ---")
     if weaviate_client and weaviate_client.is_connected():
         weaviate_client.close()
