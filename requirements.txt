@@ -3,3 +3,4 @@ weaviate-client==4.6.0
 pyairtable==2.3.4
 openai>=1.30.0
 fpdf2
+fpdf2==2.8.4
