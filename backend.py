@@ -265,8 +265,8 @@ def generate_timeline(weaviate_client, openai_client, model="gpt-4", mode="map-r
         if not context:
             return "Error: No data available to generate a timeline."
         prompt = (
-            "Using only the following context, create a chronological timeline of key events.
-            \n\n"
+            "Using only the following context, create a chronological timeline of key events."
+            "\n\n"
             f"Context:\n{context}\n\nTimeline:"
         )
         response = openai_client.chat.completions.create(
@@ -300,8 +300,8 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4", 
         if not context:
             return f"Error: No data available to generate {report_type}."
         prompt = (
-            f"Using only the following context, write a {report_type}.
-            \n\n"
+            f"Using only the following context, write a {report_type}."
+            "\n\n"
             f"Context:\n{context}\n\n{report_type}:"
         )
         response = openai_client.chat.completions.create(
@@ -335,8 +335,8 @@ def summarize_entity(entity, weaviate_client, openai_client, model="gpt-4", mode
         if not context:
             return f"Error: No data available to summarize {entity}."
         prompt = (
-            f"Using only the following context, provide a concise summary about {entity}.
-            \n\n"
+            f"Using only the following context, provide a concise summary about {entity}."
+            "\n\n"
             f"Context:\n{context}\n\nSummary:"
         )
         response = openai_client.chat.completions.create(
@@ -350,7 +350,7 @@ def summarize_entity(entity, weaviate_client, openai_client, model="gpt-4", mode
 
 def sanitize_name(name):
     """Removes characters that are problematic for API calls or filenames."""
-    return re.sub(r"[/'"]", "", name)
+    return re.sub("[/'\"]", "", name)
 
 def create_pdf(text_content, summary=None, sources=None):
     """Generates a PDF from text content, an optional summary, and a list of sources."""
