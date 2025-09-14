@@ -72,6 +72,55 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
     return "Sync successful!"
 
 def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
+    """Perform a HyDE-style semantic search and answer generation.
+
+    This function generates a hypothetical document for the user's query,
+    searches Weaviate using that hypothetical text to retrieve the most
+    relevant context, and finally asks an OpenAI model to produce an answer
+    using only the retrieved context.
     """
-    Performs a search using the HyDE technique.
-    
+
+    # --- Step 1: Generate a hypothetical document (HyDE) ---
+    hyde_prompt = f"Generate a detailed hypothetical document that answers: {query}"
+    try:
+        hyde_response = openai_client.responses.create(
+            model=model,
+            input=[{"role": "user", "content": hyde_prompt}],
+        )
+        hypothetical = hyde_response.output_text
+    except Exception as e:
+        logging.error(f"Failed to generate hypothetical document: {e}")
+        hypothetical = query
+
+    # --- Step 2: Retrieve relevant context from Weaviate ---
+    try:
+        hyp_vector = get_embedding(hypothetical, openai_client)
+        weaviate_response = (
+            weaviate_client.query
+            .get("CustodyDocs", ["chunk_content", "primary_source_content", "summary_title"])
+            .with_near_vector({"vector": hyp_vector})
+            .with_limit(5)
+            .do()
+        )
+        docs = weaviate_response.get("data", {}).get("Get", {}).get("CustodyDocs", [])
+    except Exception as e:
+        logging.error(f"Failed to retrieve context from Weaviate: {e}")
+        docs = []
+
+    context = "\n\n".join(doc.get("chunk_content", "") for doc in docs)
+
+    # --- Step 3: Generate final answer using retrieved context ---
+    answer_prompt = (
+        "Using only the following context, create a chronological timeline of key events.\n\n"
+        f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"
+    )
+    try:
+        answer_response = openai_client.responses.create(
+            model=model,
+            input=[{"role": "user", "content": answer_prompt}],
+        )
+        return answer_response.output_text
+    except Exception as e:
+        logging.error(f"Failed to generate final answer: {e}")
+        return "An error occurred while generating the answer."
+
