@@ -439,7 +439,15 @@ def fetch_report(report_name):
             os.environ["AIRTABLE_BASE_ID"],
             reports_table_name,
         )
-        record = reports_table.first(formula=f"{{Name}}='{report_name}'")
+
+        sanitized = sanitize_name(report_name)
+        if sanitized != report_name:
+            escaped_raw = report_name.replace("'", "\\'")
+            formula = f"OR({{Name}}='{sanitized}', {{Name}}='{escaped_raw}')"
+        else:
+            formula = f"{{Name}}='{sanitized}'"
+
+        record = reports_table.first(formula=formula)
         if record:
             return record.get("fields", {}).get("Content", "Report content not found.")
         return f"Report '{report_name}' not found."
