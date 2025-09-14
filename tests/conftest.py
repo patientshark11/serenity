@@ -34,13 +34,22 @@ sys.modules["weaviate.classes.config"] = config_module
 sys.modules["weaviate.classes.init"] = init_module
 
 pyairtable_module = types.ModuleType("pyairtable")
+
 class DummyTable:
     def __init__(self, *args, **kwargs):
         pass
 
     def first(self, formula=None):
         return {"fields": {"Content": "Mocked content"}}
-pyairtable_module.Table = DummyTable
+
+class DummyApi:
+    def __init__(self, api_key):
+        pass
+
+    def table(self, base_id, table_name):
+        return DummyTable()
+
+pyairtable_module.Api = DummyApi
 sys.modules["pyairtable"] = pyairtable_module
 
 fpdf_module = types.ModuleType("fpdf")
@@ -74,4 +83,4 @@ import backend
 def mock_airtable(monkeypatch):
     monkeypatch.setenv("AIRTABLE_API_KEY", "test-key")
     monkeypatch.setenv("AIRTABLE_BASE_ID", "test-base")
-    monkeypatch.setattr(backend, "Table", DummyTable)
+    monkeypatch.setattr(backend, "Api", DummyApi)

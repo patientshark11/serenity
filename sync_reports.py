@@ -17,7 +17,7 @@ import backend
 import openai
 import traceback
 import base64
-from pyairtable import Table
+from pyairtable import Api
 from datetime import datetime
 
 # --- CONFIGURATION ---
@@ -27,8 +27,8 @@ GENERATE_PDF = True  # Set to False to skip PDF generation
 def get_key_people():
     """Try to fetch key people from Airtable, otherwise fallback to static list."""
     try:
-        table = Table(
-            os.environ["AIRTABLE_API_KEY"],
+        api = Api(os.environ["AIRTABLE_API_KEY"])
+        table = api.table(
             os.environ["AIRTABLE_BASE_ID"],
             os.environ["AIRTABLE_TABLE_NAME"],
         )
@@ -131,8 +131,8 @@ def main():
         reports_table_name = os.environ.get(
             "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
         )
-        reports_table = Table(
-            os.environ["AIRTABLE_API_KEY"],
+        api = Api(os.environ["AIRTABLE_API_KEY"])
+        reports_table = api.table(
             os.environ["AIRTABLE_BASE_ID"],
             reports_table_name,
         )
