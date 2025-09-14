@@ -3,6 +3,7 @@ import os
 import backend
 import openai
 import uuid # Import uuid for unique keys
+import subprocess
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -103,9 +104,25 @@ with st.sidebar:
         if connect_to_backend():
             with st.spinner("Syncing data and generating new reports... (this may take several minutes)"):
                 try:
-                    # IMPORTANT: This should call the NEW sync script
-                    os.system("python sync_reports.py")
-                    st.toast("Data sync and report generation complete!", icon="✅")
+                    result = subprocess.run(
+                        ["python", "sync_reports.py"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        st.toast("Data sync and report generation complete!", icon="✅")
+                        if result.stdout:
+                            st.success(result.stdout)
+                        if result.stderr:
+                            st.warning(result.stderr)
+                    else:
+                        st.error(
+                            f"Sync failed with return code {result.returncode}"
+                        )
+                        if result.stdout:
+                            st.error(result.stdout)
+                        if result.stderr:
+                            st.error(result.stderr)
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
 
