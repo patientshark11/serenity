@@ -1,6 +1,7 @@
 import pytest
 import base64
 import backend
+import sync_reports
 from sync_reports import generate_and_save_report
 
 
@@ -48,3 +49,30 @@ def test_generate_and_save_report_raises_on_upsert_failure():
 
     with pytest.raises(Exception, match="upsert failed"):
         generate_and_save_report(table, "Sample Person", generator_func)
+
+
+def test_get_key_people_returns_airtable_results(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
+    monkeypatch.setenv("AIRTABLE_TABLE_NAME", "table")
+
+    captured = {}
+
+    class DummyTable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def all(self, formula=None):
+            captured["formula"] = formula
+            return [
+                {"fields": {"Name": "Kim"}},
+                {"fields": {"Name": "Diego"}},
+                {"fields": {"Name": "Kim"}},  # duplicate
+            ]
+
+    monkeypatch.setattr(sync_reports, "Table", DummyTable)
+
+    people = sync_reports.get_key_people()
+
+    assert captured["formula"] == "FIND('person', {Entity Type})"
+    assert people == ["Kim", "Diego"]
