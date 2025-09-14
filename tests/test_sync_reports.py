@@ -1,3 +1,4 @@
+import pytest
 import backend
 from sync_reports import generate_and_save_report
 
@@ -28,3 +29,18 @@ def test_generate_and_save_report_saves_name_and_pdf(monkeypatch):
     assert attachment["filename"] == f"{backend.sanitize_name('Sample Person')}.pdf"
     assert attachment["contentType"] == "application/pdf"
     assert isinstance(attachment["data"], (bytes, bytearray))
+
+
+class FailingTable:
+    def batch_upsert(self, records, key_fields=None):
+        raise Exception("upsert failed")
+
+
+def test_generate_and_save_report_raises_on_upsert_failure():
+    table = FailingTable()
+
+    def generator_func():
+        return "Report body"
+
+    with pytest.raises(Exception, match="upsert failed"):
+        generate_and_save_report(table, "Sample Person", generator_func)
