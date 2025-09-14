@@ -71,21 +71,39 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
         logging.error(f"Batch import finished with {batch.number_errors} errors.")
     return "Sync successful!"
 
-def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
-    """
-    Performs a search using the HyDE technique.
-    1. Generates a hypothetical answer to the user's query.
-    2. Embeds the hypothetical answer to get a vector.
-    3. Searches Weaviate for documents similar to that vector.
-    4. Generates a final answer based on the retrieved documents.
+def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde_model=None):
+    """Performs a search using the HyDE technique.
+
+    Parameters
+    ----------
+    query : str
+        The user's question.
+    weaviate_client : weaviate.Client
+        Client connected to a Weaviate instance.
+    openai_client : openai.OpenAI
+        OpenAI client for generating text and embeddings.
+    model : str, optional
+        Model used to generate the final answer. Defaults to ``"gpt-4"``.
+    hyde_model : str, optional
+        Model used for generating the hypothetical answer in the HyDE step.
+        Defaults to the ``OPENAI_HYDE_MODEL`` environment variable or
+        ``"gpt-3.5-turbo"`` if unset.
     """
     logging.info(f"Performing HyDE search for query: {query}")
 
+    # Determine model for hypothetical answer
+    hyde_model = hyde_model or os.getenv("OPENAI_HYDE_MODEL", "gpt-3.5-turbo")
+
     # 1. Generate a hypothetical answer
-    hyde_prompt = f"Write a detailed, factual paragraph that directly answers the following question. Do not say 'this is a hypothetical answer' or similar. Just provide the answer as if it were a[...]"
+    hyde_prompt = (
+        "Write a detailed, factual paragraph that directly answers the following question. "
+        "Do not say 'this is a hypothetical answer' or similar. "
+        "Just provide the answer as if it were a real answer.\n\nQuestion: "
+        f"{query}"
+    )
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=hyde_model,
             messages=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": hyde_prompt}]
         )
         hypothetical_answer = response.choices[0].message.content
