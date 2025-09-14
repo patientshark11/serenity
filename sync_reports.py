@@ -16,6 +16,7 @@ import logging
 import backend
 import openai
 import traceback
+import base64
 from pyairtable import Table
 from datetime import datetime
 
@@ -62,7 +63,7 @@ def generate_and_save_report(reports_table, name, generator_func):
                 pdf_bytes = backend.create_pdf(report_content, summary=name)
                 attachment = {
                     "filename": f"{sanitized_name}.pdf",
-                    "data": pdf_bytes,
+                    "data": base64.b64encode(pdf_bytes).decode("ascii"),
                     "contentType": "application/pdf",
                 }
                 print(f"PDF generated for '{name}' ({len(pdf_bytes)} bytes).")

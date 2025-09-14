@@ -1,4 +1,5 @@
 import pytest
+import base64
 import backend
 from sync_reports import generate_and_save_report
 
@@ -28,7 +29,10 @@ def test_generate_and_save_report_saves_name_and_pdf(monkeypatch):
     attachment = fields["PDF"][0]
     assert attachment["filename"] == f"{backend.sanitize_name('Sample Person')}.pdf"
     assert attachment["contentType"] == "application/pdf"
-    assert isinstance(attachment["data"], (bytes, bytearray))
+    assert isinstance(attachment["data"], str)
+    decoded = base64.b64decode(attachment["data"])
+    expected_pdf = backend.create_pdf("Report body", summary="Sample Person")
+    assert decoded == expected_pdf
 
 
 class FailingTable:
