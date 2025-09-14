@@ -87,10 +87,13 @@ def test_get_key_people_returns_airtable_results(monkeypatch):
 
     class DummyApi:
         def __init__(self, api_key):
-            pass
+            self.closed = False
 
         def table(self, base_id, table_name):
             return DummyTable()
+
+        def close(self):
+            self.closed = True
 
     monkeypatch.setattr(sync_reports, "Api", DummyApi)
 

@@ -69,37 +69,40 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=None,
         ]
     )
     api = Api(os.environ["AIRTABLE_API_KEY"])
-    table = api.table(
-        os.environ["AIRTABLE_BASE_ID"],
-        os.environ["AIRTABLE_TABLE_NAME"],
-    )
-    records = table.all(max_records=limit) if limit else table.all()
-    with custody_docs.batch.dynamic() as batch:
-        for item in records:
-            fields = item.get("fields", {})
-            full_content = " ".join(str(v) for v in fields.values() if v)
-            source_url = fields.get("Primary Source Content", "")
-            summary_title = fields.get("Summary Title", "Untitled Source")
-            if not full_content:
-                continue
+    try:
+        table = api.table(
+            os.environ["AIRTABLE_BASE_ID"],
+            os.environ["AIRTABLE_TABLE_NAME"],
+        )
+        records = table.all(max_records=limit) if limit else table.all()
+        with custody_docs.batch.dynamic() as batch:
+            for item in records:
+                fields = item.get("fields", {})
+                full_content = " ".join(str(v) for v in fields.values() if v)
+                source_url = fields.get("Primary Source Content", "")
+                summary_title = fields.get("Summary Title", "Untitled Source")
+                if not full_content:
+                    continue
 
-            # Simple text splitting for now, can be improved later
-            chunks = (lambda text, n: [text[i:i + n] for i in range(0, len(text), n)])(
-                full_content, chunk_size
-            )
+                # Simple text splitting for now, can be improved later
+                chunks = (lambda text, n: [text[i:i + n] for i in range(0, len(text), n)])(
+                    full_content, chunk_size
+                )
 
-            for chunk in chunks:
-                emb = get_embedding(chunk, openai_client)
-                data_obj = {
-                    "chunk_content": chunk,
-                    "airtable_record_id": item["id"],
-                    "primary_source_content": source_url,
-                    "summary_title": summary_title,
-                }
-                batch.add_object(properties=data_obj, vector=emb)
-    if batch.number_errors > 0:
-        logging.error(f"Batch import finished with {batch.number_errors} errors.")
-    return "Sync successful!"
+                for chunk in chunks:
+                    emb = get_embedding(chunk, openai_client)
+                    data_obj = {
+                        "chunk_content": chunk,
+                        "airtable_record_id": item["id"],
+                        "primary_source_content": source_url,
+                        "summary_title": summary_title,
+                    }
+                    batch.add_object(properties=data_obj, vector=emb)
+        if batch.number_errors > 0:
+            logging.error(f"Batch import finished with {batch.number_errors} errors.")
+        return "Sync successful!"
+    finally:
+        api.close()
 
 def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde_model=None):
     """Performs a search using the HyDE technique.
@@ -423,18 +426,28 @@ def create_pdf(text_content, summary=None, sources=None):
         logging.error("Failed to generate PDF.", exc_info=True)
         return b"Error: Could not generate the PDF file."
 
-def fetch_report(report_name):
+def fetch_report(report_name, api=None):
     """Fetches a pre-generated report from the Airtable reports table.
 
     The table name defaults to ``"GeneratedReports"`` but can be overridden
     via the ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable.
+
+    Parameters
+    ----------
+    report_name : str
+        Name of the report to fetch.
+    api : pyairtable.Api, optional
+        Existing Airtable API instance to reuse. If ``None``, a new instance
+        will be created and closed automatically.
     """
     logging.info(f"Fetching report '{report_name}' from Airtable.")
+    manage_api = api is None
+    if manage_api:
+        api = Api(os.environ["AIRTABLE_API_KEY"])
     try:
         reports_table_name = os.environ.get(
             "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
         )
-        api = Api(os.environ["AIRTABLE_API_KEY"])
         reports_table = api.table(
             os.environ["AIRTABLE_BASE_ID"],
             reports_table_name,
@@ -454,3 +467,27 @@ def fetch_report(report_name):
     except Exception as e:
         logging.error(f"Failed to fetch report '{report_name}': {e}")
         return f"Error: Could not fetch report '{report_name}'."
+    finally:
+        if manage_api:
+            api.close()
+
+
+def fetch_reports(report_names):
+    """Fetch multiple pre-generated reports using a single Airtable API instance.
+
+    Parameters
+    ----------
+    report_names : Iterable[str]
+        The report names to fetch.
+
+    Returns
+    -------
+    dict
+        Mapping of each requested report name to its content or an error
+        message if not found.
+    """
+    api = Api(os.environ["AIRTABLE_API_KEY"])
+    try:
+        return {name: fetch_report(name, api=api) for name in report_names}
+    finally:
+        api.close()
