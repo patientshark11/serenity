@@ -15,7 +15,6 @@ import openai
 import traceback
 from pyairtable import Table
 from datetime import datetime
-import base64
 
 # --- CONFIGURATION ---
 REPORT_MODE = os.environ.get("REPORT_MODE", "map-reduce")  # "map-reduce" or "simple"
@@ -54,11 +53,15 @@ def generate_and_save_report(reports_table, name, generator_func):
         if "error" in report_content.lower() or "could not find" in report_content.lower():
             print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
 
-        pdf_bytes_b64 = ""
+        attachment = None
         if GENERATE_PDF:
             try:
                 pdf_bytes = backend.create_pdf(report_content, summary=name)
-                pdf_bytes_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                attachment = {
+                    "filename": f"{sanitized_name}.pdf",
+                    "data": pdf_bytes,
+                    "contentType": "application/pdf",
+                }
                 print(f"PDF generated for '{name}' ({len(pdf_bytes)} bytes).")
             except Exception as pdf_err:
                 print(f"Failed to generate PDF for '{name}': {pdf_err}", file=sys.stderr)
@@ -68,8 +71,8 @@ def generate_and_save_report(reports_table, name, generator_func):
             "Content": report_content,
             "LastGenerated": datetime.now().isoformat()
         }
-        if GENERATE_PDF:
-            record_to_save["PDF"] = pdf_bytes_b64
+        if GENERATE_PDF and attachment:
+            record_to_save["PDF"] = [attachment]
         try:
             result = reports_table.batch_upsert(
                 [{"fields": record_to_save}], key_fields=["ReportName"]
