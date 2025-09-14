@@ -67,20 +67,18 @@ def generate_and_save_report(reports_table, name, generator_func):
                 print(f"Failed to generate PDF for '{name}': {pdf_err}", file=sys.stderr)
         
         record_to_save = {
-            "ReportName": sanitized_name,
+            "Name": sanitized_name,
             "Content": report_content,
-            "LastGenerated": datetime.now().isoformat()
+            "LastGenerated": datetime.now().isoformat(),
         }
         if GENERATE_PDF and attachment:
             record_to_save["PDF"] = [attachment]
+
+        key_fields = ["Name"]
         try:
-            existing_record = reports_table.first(
-                formula=f"{{ReportName}} = '{sanitized_name}'"
+            reports_table.batch_upsert(
+                [{"fields": record_to_save}], key_fields=key_fields
             )
-            if existing_record:
-                reports_table.update(existing_record["id"], record_to_save)
-            else:
-                reports_table.create(record_to_save)
         except Exception as upsert_err:
             print(
                 f"ERROR: Failed to save report for '{name}' to Airtable: {upsert_err}",
