@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+import warnings
 import pytest
 
 # Ensure project root is in sys.path
@@ -43,11 +44,21 @@ class DummyTable:
         return {"fields": {"Content": "Mocked content"}}
 
 class DummyApi:
+    instances = 0
+
     def __init__(self, api_key):
-        pass
+        self.closed = False
+        DummyApi.instances += 1
 
     def table(self, base_id, table_name):
         return DummyTable()
+
+    def close(self):
+        self.closed = True
+
+    def __del__(self):
+        if not self.closed:
+            warnings.warn("DummyApi not closed", ResourceWarning)
 
 pyairtable_module.Api = DummyApi
 sys.modules["pyairtable"] = pyairtable_module

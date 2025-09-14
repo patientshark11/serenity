@@ -1,3 +1,4 @@
+import warnings
 import backend
 
 
@@ -27,10 +28,13 @@ def test_fetch_report_sanitizes_name_in_formula(monkeypatch):
 
     class DummyApi:
         def __init__(self, api_key):
-            pass
+            self.closed = False
 
         def table(self, base_id, table_name):
             return DummyTable()
+
+        def close(self):
+            self.closed = True
 
     monkeypatch.setenv("AIRTABLE_API_KEY", "key")
     monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
@@ -41,3 +45,40 @@ def test_fetch_report_sanitizes_name_in_formula(monkeypatch):
 
     assert "{Name}='ReportNames Test'" in captured["formula"]
     assert "{Name}='Report/Name\\'s \"Test\"'" in captured["formula"]
+
+
+def test_fetch_reports_uses_single_api_and_no_resource_warning(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
+
+    class DummyTable:
+        def first(self, formula=None):
+            return {"fields": {"Content": "Mocked content"}}
+
+    class DummyApi:
+        instances = 0
+
+        def __init__(self, api_key):
+            self.closed = False
+            DummyApi.instances += 1
+
+        def table(self, base_id, table_name):
+            return DummyTable()
+
+        def close(self):
+            self.closed = True
+
+        def __del__(self):
+            if not self.closed:
+                warnings.warn("DummyApi not closed", ResourceWarning)
+
+    monkeypatch.setattr(backend, "Api", DummyApi)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("error", ResourceWarning)
+        reports = backend.fetch_reports(["A", "B", "C"])
+
+    assert DummyApi.instances == 1
+    assert len(reports) == 3
+    assert all(content == "Mocked content" for content in reports.values())
+    assert len(w) == 0

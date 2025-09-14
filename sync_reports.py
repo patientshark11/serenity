@@ -26,6 +26,7 @@ GENERATE_PDF = True  # Set to False to skip PDF generation
 
 def get_key_people():
     """Try to fetch key people from Airtable, otherwise fallback to static list."""
+    api = None
     try:
         api = Api(os.environ["AIRTABLE_API_KEY"])
         table = api.table(
@@ -43,6 +44,9 @@ def get_key_people():
             return key_people
     except Exception as e:
         print(f"Could not fetch key people from Airtable, falling back to static list. Error: {e}", file=sys.stderr)
+    finally:
+        if api:
+            api.close()
     # Fallback static list
     return [
         "Kim", "Diego", "Kim's family/friends", "YWCA Staff",
@@ -141,6 +145,7 @@ def main():
 
     # --- 3. Pre-generate Analysis Reports ---
     print("\nStarting report pre-generation...")
+    api = None
     try:
         reports_table_name = os.environ.get(
             "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
@@ -156,6 +161,8 @@ def main():
             f"FATAL: Could not connect to '{reports_table_name}' table in Airtable. Aborting job. Error: {e}",
             file=sys.stderr,
         )
+        if api:
+            api.close()
         if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
             weaviate_client.close()
         sys.exit(1)
@@ -191,6 +198,8 @@ def main():
         )
 
     print("\n--- Nightly job finished ---")
+    if api:
+        api.close()
     if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
         weaviate_client.close()
 
