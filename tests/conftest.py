@@ -1,0 +1,77 @@
+import os
+import sys
+import types
+import pytest
+
+# Ensure project root is in sys.path
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+# Create dummy modules for unavailable dependencies
+sys.modules.setdefault("openai", types.ModuleType("openai"))
+
+weaviate_module = types.ModuleType("weaviate")
+classes_module = types.ModuleType("classes")
+config_module = types.ModuleType("config")
+init_module = types.ModuleType("init")
+
+class _Vectorizer:
+    @staticmethod
+    def none():
+        return None
+
+config_module.Configure = types.SimpleNamespace(Vectorizer=_Vectorizer)
+config_module.Property = object
+config_module.DataType = object
+init_module.Auth = object
+classes_module.config = config_module
+classes_module.init = init_module
+weaviate_module.classes = classes_module
+sys.modules["weaviate"] = weaviate_module
+sys.modules["weaviate.classes"] = classes_module
+sys.modules["weaviate.classes.config"] = config_module
+sys.modules["weaviate.classes.init"] = init_module
+
+pyairtable_module = types.ModuleType("pyairtable")
+class DummyTable:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def first(self, formula=None):
+        return {"fields": {"Content": "Mocked content"}}
+pyairtable_module.Table = DummyTable
+sys.modules["pyairtable"] = pyairtable_module
+
+fpdf_module = types.ModuleType("fpdf")
+class DummyFPDF:
+    def add_page(self):
+        pass
+
+    def set_font(self, *args, **kwargs):
+        pass
+
+    def cell(self, *args, **kwargs):
+        pass
+
+    def ln(self, *args, **kwargs):
+        pass
+
+    def multi_cell(self, *args, **kwargs):
+        pass
+
+    def set_text_color(self, *args, **kwargs):
+        pass
+
+    def output(self, dest="S"):
+        return b"PDF"
+fpdf_module.FPDF = DummyFPDF
+sys.modules["fpdf"] = fpdf_module
+
+import backend
+
+@pytest.fixture
+def mock_airtable(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "test-base")
+    monkeypatch.setattr(backend, "Table", DummyTable)
