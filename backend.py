@@ -6,7 +6,7 @@ import uuid
 import re
 import logging
 import json
-from fpdf2 import FPDF
+from fpdf import FPDF
 from io import BytesIO
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.init import Auth
