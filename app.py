@@ -143,7 +143,15 @@ for message in st.session_state.messages:
             st.download_button("Export as PDF", pdf_bytes, f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message.get('id', str(uuid.uuid4()))}")
 
 # Check for connections before allowing chat
-if not all(os.environ.get(key) for key in ["WEAVIATE_URL", "OPENAI_API_KEY", "AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME"]):
+required_env_vars = [
+    "WEAVIATE_URL",
+    "OPENAI_API_KEY",
+    "AIRTABLE_API_KEY",
+    "AIRTABLE_BASE_ID",
+    "AIRTABLE_TABLE_NAME",
+    "AIRTABLE_REPORTS_TABLE_NAME",
+]
+if not all(os.environ.get(key) for key in required_env_vars):
     st.warning("Application is not fully configured. Please check environment variables.")
 elif not connect_to_backend():
     st.warning("Could not connect to backend services. Please check your configuration and network.")

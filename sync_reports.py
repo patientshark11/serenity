@@ -6,7 +6,9 @@ It performs two main tasks:
 1.  Syncs the main data table from Airtable to the Weaviate vector database.
 2.  Generates all standard analysis reports (Timeline, Conflict Report, etc.) and
     a summary for each key person, then saves the output to a separate
-    'GeneratedReports' table in Airtable for instant retrieval by the app.
+    reports table in Airtable (default name: 'GeneratedReports') for instant
+    retrieval by the app. The table name can be overridden via the
+    ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable.
 """
 import os
 import sys
@@ -116,10 +118,20 @@ def main():
     # --- 3. Pre-generate Analysis Reports ---
     print("\nStarting report pre-generation...")
     try:
-        reports_table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], "GeneratedReports")
-        print("Connected to 'GeneratedReports' Airtable table.")
+        reports_table_name = os.environ.get(
+            "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
+        )
+        reports_table = Table(
+            os.environ["AIRTABLE_API_KEY"],
+            os.environ["AIRTABLE_BASE_ID"],
+            reports_table_name,
+        )
+        print(f"Connected to '{reports_table_name}' Airtable table.")
     except Exception as e:
-        print(f"FATAL: Could not connect to 'GeneratedReports' table in Airtable. Aborting job. Error: {e}", file=sys.stderr)
+        print(
+            f"FATAL: Could not connect to '{reports_table_name}' table in Airtable. Aborting job. Error: {e}",
+            file=sys.stderr,
+        )
         if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
             weaviate_client.close()
         sys.exit(1)
