@@ -427,8 +427,12 @@ def fetch_report(report_name):
     """Fetches a pre-generated report from the 'GeneratedReports' Airtable table."""
     logging.info(f"Fetching report '{report_name}' from Airtable.")
     try:
-        reports_table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], "GeneratedReports")
-        record = reports_table.first(formula=f"{{ReportName}}='{report_name}'")
+        reports_table = Table(
+            os.environ["AIRTABLE_API_KEY"],
+            os.environ["AIRTABLE_BASE_ID"],
+            "GeneratedReports",
+        )
+        record = reports_table.first(formula=f"{{Name}}='{report_name}'")
         if record:
             return record.get("fields", {}).get("Content", "Report content not found.")
         return f"Report '{report_name}' not found."
