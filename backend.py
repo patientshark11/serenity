@@ -1,7 +1,7 @@
 import os
 import weaviate
 import openai
-from pyairtable import Table
+from pyairtable import Api
 import uuid
 import re
 import logging
@@ -68,8 +68,8 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=None,
             Property(name="summary_title", data_type=DataType.TEXT),
         ]
     )
-    table = Table(
-        os.environ["AIRTABLE_API_KEY"],
+    api = Api(os.environ["AIRTABLE_API_KEY"])
+    table = api.table(
         os.environ["AIRTABLE_BASE_ID"],
         os.environ["AIRTABLE_TABLE_NAME"],
     )
@@ -434,8 +434,8 @@ def fetch_report(report_name):
         reports_table_name = os.environ.get(
             "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
         )
-        reports_table = Table(
-            os.environ["AIRTABLE_API_KEY"],
+        api = Api(os.environ["AIRTABLE_API_KEY"])
+        reports_table = api.table(
             os.environ["AIRTABLE_BASE_ID"],
             reports_table_name,
         )

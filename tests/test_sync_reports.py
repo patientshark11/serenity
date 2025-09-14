@@ -70,7 +70,14 @@ def test_get_key_people_returns_airtable_results(monkeypatch):
                 {"fields": {"Name": "Kim"}},  # duplicate
             ]
 
-    monkeypatch.setattr(sync_reports, "Table", DummyTable)
+    class DummyApi:
+        def __init__(self, api_key):
+            pass
+
+        def table(self, base_id, table_name):
+            return DummyTable()
+
+    monkeypatch.setattr(sync_reports, "Api", DummyApi)
 
     people = sync_reports.get_key_people()
 
