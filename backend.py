@@ -6,7 +6,7 @@ import uuid
 import re
 import logging
 import json
-from fpdf2 import FPDF
+from fpdf import FPDF
 from io import BytesIO
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.init import Auth
@@ -160,7 +160,7 @@ def create_pdf(text_content, summary=None, sources=None):
                 pdf.ln(5)
             pdf.set_text_color(0, 0, 0)
 
-        pdf_bytes = pdf.output()
+        pdf_bytes = pdf.output(dest='S').encode('latin1')
         logging.info("PDF generation successful.")
         return pdf_bytes
     except Exception as e:
