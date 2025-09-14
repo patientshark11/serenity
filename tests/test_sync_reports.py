@@ -15,7 +15,7 @@ class DummyTable:
         return [{"id": "rec1", "fields": records[0]["fields"]}]
 
 
-def test_generate_and_save_report_saves_name_and_pdf(monkeypatch):
+def test_generate_and_save_report_sends_base64_pdf(monkeypatch):
     table = DummyTable()
 
     def generator_func():
@@ -32,10 +32,23 @@ def test_generate_and_save_report_saves_name_and_pdf(monkeypatch):
     attachment = fields["PDF"][0]
     assert attachment["filename"] == f"{backend.sanitize_name('Sample Person')}.pdf"
     assert attachment["contentType"] == "application/pdf"
-    assert isinstance(attachment["data"], str)
-    decoded = base64.b64decode(attachment["data"])
+    assert isinstance(attachment["base64"], str)
+    decoded = base64.b64decode(attachment["base64"])
     expected_pdf = backend.create_pdf("Report body", summary="Sample Person")
     assert decoded == expected_pdf
+
+
+def test_generate_and_save_report_attachment_structure():
+    table = DummyTable()
+
+    def generator_func():
+        return "Another report"
+
+    generate_and_save_report(table, "Another Person", generator_func)
+
+    records, key_fields = table.upserts[0]
+    attachment = records[0]["fields"]["PDF"][0]
+    assert set(attachment.keys()) == {"filename", "base64", "contentType"}
 
 
 class FailingTable:
