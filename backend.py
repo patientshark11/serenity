@@ -33,8 +33,26 @@ def get_embedding(text, openai_client):
     response = openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
     return response.data[0].embedding
 
-def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000):
-    """Ingests data from Airtable into Weaviate, creating a new schema."""
+def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=None, limit=None):
+    """Ingests data from Airtable into Weaviate, creating a new schema.
+
+    Optional behaviour such as limiting the number of ingested Airtable records or
+    adjusting the text chunk size can be controlled via the ``SYNC_LIMIT`` and
+    ``SYNC_CHUNK_SIZE`` environment variables or by passing explicit arguments.
+    """
+
+    if chunk_size is None:
+        try:
+            chunk_size = int(os.environ.get("SYNC_CHUNK_SIZE", "2000"))
+        except ValueError:
+            chunk_size = 2000
+
+    if limit is None:
+        try:
+            limit = int(os.environ.get("SYNC_LIMIT", "0")) or None
+        except ValueError:
+            limit = None
+
     collection_name = "CustodyDocs"
     logging.info(f"Starting Airtable ingestion process for collection '{collection_name}'.")
     if weaviate_client.collections.exists(collection_name):
@@ -50,22 +68,34 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
             Property(name="summary_title", data_type=DataType.TEXT),
         ]
     )
-    table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], os.environ["AIRTABLE_TABLE_NAME"])
-    records = table.all()
+    table = Table(
+        os.environ["AIRTABLE_API_KEY"],
+        os.environ["AIRTABLE_BASE_ID"],
+        os.environ["AIRTABLE_TABLE_NAME"],
+    )
+    records = table.all(max_records=limit) if limit else table.all()
     with custody_docs.batch.dynamic() as batch:
         for item in records:
             fields = item.get("fields", {})
             full_content = " ".join(str(v) for v in fields.values() if v)
             source_url = fields.get("Primary Source Content", "")
             summary_title = fields.get("Summary Title", "Untitled Source")
-            if not full_content: continue
+            if not full_content:
+                continue
 
             # Simple text splitting for now, can be improved later
-            chunks = (lambda text, n: [text[i:i+n] for i in range(0, len(text), n)])(full_content, chunk_size)
+            chunks = (lambda text, n: [text[i:i + n] for i in range(0, len(text), n)])(
+                full_content, chunk_size
+            )
 
             for chunk in chunks:
                 emb = get_embedding(chunk, openai_client)
-                data_obj = {"chunk_content": chunk, "airtable_record_id": item["id"], "primary_source_content": source_url, "summary_title": summary_title}
+                data_obj = {
+                    "chunk_content": chunk,
+                    "airtable_record_id": item["id"],
+                    "primary_source_content": source_url,
+                    "summary_title": summary_title,
+                }
                 batch.add_object(properties=data_obj, vector=emb)
     if batch.number_errors > 0:
         logging.error(f"Batch import finished with {batch.number_errors} errors.")
