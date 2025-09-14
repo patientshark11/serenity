@@ -27,8 +27,12 @@ GENERATE_PDF = True  # Set to False to skip PDF generation
 def get_key_people():
     """Try to fetch key people from Airtable, otherwise fallback to static list."""
     try:
-        table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], os.environ["AIRTABLE_TABLE_NAME"])
-        people_records = table.all(formula="FIND('person', {EntityType})")
+        table = Table(
+            os.environ["AIRTABLE_API_KEY"],
+            os.environ["AIRTABLE_BASE_ID"],
+            os.environ["AIRTABLE_TABLE_NAME"],
+        )
+        people_records = table.all(formula="FIND('person', {Entity Type})")
         key_people = []
         for rec in people_records:
             name = rec.get("fields", {}).get("Name")
