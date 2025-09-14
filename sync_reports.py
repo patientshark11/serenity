@@ -53,8 +53,8 @@ def generate_and_save_report(reports_table, name, generator_func):
 
         if "error" in report_content.lower() or "could not find" in report_content.lower():
             print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
-        
-pdf_bytes_b64 = ""
+
+        pdf_bytes_b64 = ""
         if GENERATE_PDF:
             try:
                 pdf_bytes = backend.create_pdf(report_content, summary=name)
