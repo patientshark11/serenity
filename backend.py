@@ -1,12 +1,15 @@
 import os
 import weaviate
-import openai
+from openai import OpenAI
 from pyairtable import Table
 import uuid
 import re
 import logging
 import json
-from fpdf import FPDF
+try:
+    from fpdf import FPDF
+except Exception:  # pragma: no cover - optional dependency
+    FPDF = None
 from io import BytesIO
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.init import Auth
@@ -33,43 +36,90 @@ def get_embedding(text, openai_client):
     response = openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
     return response.data[0].embedding
 
-def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000):
-    """Ingests data from Airtable into Weaviate, creating a new schema."""
-    collection_name = "CustodyDocs"
-    logging.info(f"Starting Airtable ingestion process for collection '{collection_name}'.")
-    if weaviate_client.collections.exists(collection_name):
-        weaviate_client.collections.delete(collection_name)
+def ingest_airtable_to_weaviate(limit=None, chunk_size=2000):
+    """Ingests data from Airtable into Weaviate, creating a new schema.
 
-    custody_docs = weaviate_client.collections.create(
-        name=collection_name,
-        vectorizer_config=Configure.Vectorizer.none(),
-        properties=[
-            Property(name="chunk_content", data_type=DataType.TEXT),
-            Property(name="airtable_record_id", data_type=DataType.TEXT),
-            Property(name="primary_source_content", data_type=DataType.TEXT),
-            Property(name="summary_title", data_type=DataType.TEXT),
-        ]
-    )
-    table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], os.environ["AIRTABLE_TABLE_NAME"])
-    records = table.all()
-    with custody_docs.batch.dynamic() as batch:
-        for item in records:
-            fields = item.get("fields", {})
-            full_content = " ".join(str(v) for v in fields.values() if v)
-            source_url = fields.get("Primary Source Content", "")
-            summary_title = fields.get("Summary Title", "Untitled Source")
-            if not full_content: continue
+    Parameters
+    ----------
+    limit : int | None
+        Maximum number of Airtable records to ingest. If ``None`` all records
+        are processed.
+    chunk_size : int
+        Size of text chunks when splitting large documents.
 
-            # Simple text splitting for now, can be improved later
-            chunks = (lambda text, n: [text[i:i+n] for i in range(0, len(text), n)])(full_content, chunk_size)
+    Returns
+    -------
+    dict
+        Status information including number of records ingested or an error
+        message if ingestion fails.
+    """
+    weaviate_client = None
+    try:
+        weaviate_client = connect_to_weaviate()
+        openai_client = OpenAI()
 
-            for chunk in chunks:
-                emb = get_embedding(chunk, openai_client)
-                data_obj = {"chunk_content": chunk, "airtable_record_id": item["id"], "primary_source_content": source_url, "summary_title": summary_title}
-                batch.add_object(properties=data_obj, vector=emb)
-    if batch.number_errors > 0:
-        logging.error(f"Batch import finished with {batch.number_errors} errors.")
-    return "Sync successful!"
+        collection_name = "CustodyDocs"
+        logging.info(f"Starting Airtable ingestion process for collection '{collection_name}'.")
+        if weaviate_client.collections.exists(collection_name):
+            weaviate_client.collections.delete(collection_name)
+
+        custody_docs = weaviate_client.collections.create(
+            name=collection_name,
+            vectorizer_config=Configure.Vectorizer.none(),
+            properties=[
+                Property(name="chunk_content", data_type=DataType.TEXT),
+                Property(name="airtable_record_id", data_type=DataType.TEXT),
+                Property(name="primary_source_content", data_type=DataType.TEXT),
+                Property(name="summary_title", data_type=DataType.TEXT),
+            ]
+        )
+
+        table = Table(
+            os.environ["AIRTABLE_API_KEY"],
+            os.environ["AIRTABLE_BASE_ID"],
+            os.environ["AIRTABLE_TABLE_NAME"],
+        )
+        table_kwargs = {"max_records": limit} if limit is not None else {}
+        records = table.all(**table_kwargs)
+        ingested = 0
+        with custody_docs.batch.dynamic() as batch:
+            for item in records:
+                fields = item.get("fields", {})
+                full_content = " ".join(str(v) for v in fields.values() if v)
+                source_url = fields.get("Primary Source Content", "")
+                summary_title = fields.get("Summary Title", "Untitled Source")
+                if not full_content:
+                    continue
+
+                # Simple text splitting for now, can be improved later
+                chunks = (lambda text, n: [text[i:i+n] for i in range(0, len(text), n)])(full_content, chunk_size)
+
+                for chunk in chunks:
+                    emb = get_embedding(chunk, openai_client)
+                    data_obj = {
+                        "chunk_content": chunk,
+                        "airtable_record_id": item["id"],
+                        "primary_source_content": source_url,
+                        "summary_title": summary_title,
+                    }
+                    batch.add_object(properties=data_obj, vector=emb)
+                ingested += 1
+
+        result = {
+            "status": "ok",
+            "records_ingested": ingested,
+            "errors": getattr(batch, "number_errors", 0),
+        }
+    except Exception as e:
+        logging.error(f"Ingestion failed: {e}", exc_info=True)
+        result = {"status": "error", "message": str(e)}
+    finally:
+        try:
+            weaviate_client.close()
+        except Exception:
+            pass
+
+    return result
 
 def generative_search(query, weaviate_client, openai_client, model="gpt-4"):
     """
