@@ -84,9 +84,23 @@ def generate_and_save_report(reports_table, name, generator_func):
 
         key_fields = ["Name"]
         try:
-            reports_table.batch_upsert(
+            response = reports_table.batch_upsert(
                 [{"fields": record_to_save}], key_fields=key_fields
             )
+            # Ensure the Airtable API returned a created or updated record
+            if (
+                not response
+                or not isinstance(response, list)
+                or not any(r.get("id") for r in response)
+            ):
+                logging.error(
+                    "Airtable upsert for '%s' returned unexpected response: %s",
+                    name,
+                    response,
+                )
+                raise RuntimeError(
+                    f"Airtable upsert for '{name}' did not return a record"
+                )
         except Exception as upsert_err:
             server_response = getattr(upsert_err, "body", upsert_err)
             logging.error(

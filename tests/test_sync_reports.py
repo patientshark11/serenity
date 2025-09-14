@@ -11,6 +11,8 @@ class DummyTable:
 
     def batch_upsert(self, records, key_fields=None):
         self.upserts.append((records, key_fields))
+        # Simulate Airtable returning a created or updated record
+        return [{"id": "rec1", "fields": records[0]["fields"]}]
 
 
 def test_generate_and_save_report_saves_name_and_pdf(monkeypatch):
