@@ -12,6 +12,7 @@ It performs two main tasks:
 """
 import os
 import sys
+import logging
 import backend
 import openai
 import traceback
@@ -66,7 +67,7 @@ def generate_and_save_report(reports_table, name, generator_func):
                 }
                 print(f"PDF generated for '{name}' ({len(pdf_bytes)} bytes).")
             except Exception as pdf_err:
-                print(f"Failed to generate PDF for '{name}': {pdf_err}", file=sys.stderr)
+                logging.error("Failed to generate PDF for '%s': %s", name, pdf_err)
 
         record_to_save = {
             "Name": sanitized_name,
@@ -83,16 +84,20 @@ def generate_and_save_report(reports_table, name, generator_func):
             )
         except Exception as upsert_err:
             server_response = getattr(upsert_err, "body", upsert_err)
-            print(
-                f"ERROR: Failed to save report for '{name}' to Airtable: {server_response}",
-                file=sys.stderr,
+            logging.error(
+                "Failed to save report for '%s' to Airtable: %s", name, server_response
             )
-            return False
+            raise
         print(f"Successfully generated and saved report for '{name}'")
         return True
     except Exception as e:
-        print(f"ERROR: Failed to generate or save report for '{name}'. Error: {e}\n{traceback.format_exc()}", file=sys.stderr)
-        return False
+        logging.error(
+            "Failed to generate or save report for '%s'. Error: %s\n%s",
+            name,
+            e,
+            traceback.format_exc(),
+        )
+        raise
 
 def main():
     print("--- Starting nightly job: Data Sync and Report Generation ---")
