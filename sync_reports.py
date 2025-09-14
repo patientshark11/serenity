@@ -70,8 +70,20 @@ def generate_and_save_report(reports_table, name, generator_func):
         }
         if GENERATE_PDF:
             record_to_save["PDF"] = pdf_bytes_b64
-
-        reports_table.upsert([record_to_save], key_fields=["ReportName"])
+        try:
+            result = reports_table.batch_upsert(
+                [{"fields": record_to_save}], key_fields=["ReportName"]
+            )
+            if not result or not result[0].get("id"):
+                raise RuntimeError(
+                    f"Airtable batch_upsert returned unexpected result: {result}"
+                )
+        except Exception as upsert_err:
+            print(
+                f"ERROR: Failed to save report for '{name}' to Airtable: {upsert_err}",
+                file=sys.stderr,
+            )
+            raise
         print(f"Successfully generated and saved report for '{name}'")
     except Exception as e:
         print(f"ERROR: Failed to generate or save report for '{name}'. Error: {e}\n{traceback.format_exc()}", file=sys.stderr)
