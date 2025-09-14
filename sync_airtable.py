@@ -4,13 +4,22 @@ Create a Render *Cron Job* service that runs:
 """
 import os
 import sys
-from backend import ingest_airtable_to_weaviate
+import backend
+import openai
 
 if __name__ == "__main__":
+    weaviate_client = None
     try:
-        limit = int(os.environ.get("SYNC_LIMIT", "0")) or None
-    except ValueError:
-        limit = None
-    res = ingest_airtable_to_weaviate(limit=limit)
-    print({"status": "ok", **res})
-    sys.exit(0)
+        weaviate_client = backend.connect_to_weaviate()
+        openai_client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        res = backend.ingest_airtable_to_weaviate(
+            weaviate_client, openai_client, chunk_size=2000
+        )
+        print({"status": "ok", "result": res})
+        sys.exit(0)
+    except Exception as e:
+        print({"status": "error", "error": str(e)}, file=sys.stderr)
+        sys.exit(1)
+    finally:
+        if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
+            weaviate_client.close()
