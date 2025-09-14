@@ -80,8 +80,9 @@ def generate_and_save_report(reports_table, name, generator_func):
                 [{"fields": record_to_save}], key_fields=key_fields
             )
         except Exception as upsert_err:
+            server_response = getattr(upsert_err, "body", upsert_err)
             print(
-                f"ERROR: Failed to save report for '{name}' to Airtable: {getattr(upsert_err, 'body', upsert_err)}",
+                f"ERROR: Failed to save report for '{name}' to Airtable: {server_response}",
                 file=sys.stderr,
             )
             return False
@@ -137,7 +138,14 @@ def main():
     # --- 5. Generate & Save Reports ---
     failed_reports = []
     for name, generator_func in reports_to_generate.items():
-        if not generate_and_save_report(reports_table, name, generator_func):
+        try:
+            if not generate_and_save_report(reports_table, name, generator_func):
+                failed_reports.append(name)
+        except Exception as loop_err:
+            print(
+                f"ERROR: Unexpected failure while processing '{name}': {loop_err}",
+                file=sys.stderr,
+            )
             failed_reports.append(name)
 
     if failed_reports:
