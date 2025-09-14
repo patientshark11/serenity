@@ -129,7 +129,7 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
 
     # 4. Generate the final answer
     context = "\n---\n".join([obj.properties["chunk_content"] for obj in results])
-    final_prompt = f"Based ONLY on the following context, please provide a comprehensive answer to the user's original question.\n\nContext:\n{context}\n\nOriginal Question: {query}\n\nAnswer:" 
+    final_prompt = f"Based ONLY on the following context, please provide a comprehensive answer to the user's original question.\n\nContext:\n{context}\n\nOriginal Question: {query}\n\nAnswer:"
 
     answer_stream = openai_client.chat.completions.create(
         model=model,
@@ -144,9 +144,213 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
     summary = f"Response to: \"{query[:40]}...\""
     return answer_stream, sources, summary
 
+def _collect_context(search_query, weaviate_client, openai_client, limit=20):
+    """Retrieves relevant chunks from Weaviate for a given query."""
+    try:
+        hyde_prompt = (
+            "Write a concise paragraph that answers the following question. "
+            "Do not mention this is hypothetical. Question: " + search_query
+        )
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": hyde_prompt},
+            ],
+        )
+        hypo_answer = response.choices[0].message.content
+    except Exception as e:
+        logging.error(f"Failed to generate hypothetical answer: {e}")
+        hypo_answer = search_query
+
+    try:
+        query_vector = get_embedding(hypo_answer, openai_client)
+        collection = weaviate_client.collections.get("CustodyDocs")
+        resp = collection.query.near_vector(
+            near_vector=query_vector,
+            limit=limit,
+            return_properties=["chunk_content"],
+        )
+        context = "\n---\n".join(
+            obj.properties.get("chunk_content", "") for obj in resp.objects
+        )
+        return context
+    except Exception as e:
+        logging.error(f"Failed to retrieve context from Weaviate: {e}")
+        return ""
+
+def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model="gpt-4", entity_name=None):
+    """
+    A generic map-reduce framework for querying Weaviate, processing chunks, and summarizing.
+    If an entity_name is provided, it performs a targeted search. Otherwise, it iterates through all docs.
+    """
+    collection_name = "CustodyDocs"
+    if not weaviate_client.collections.exists(collection_name):
+        return "The document collection does not exist. Please run the data sync first."
+
+    collection = weaviate_client.collections.get(collection_name)
+
+    items_to_process = []
+    if entity_name:
+        logging.info(f"Starting targeted search for entity: {entity_name}")
+        query_vector = get_embedding(entity_name, openai_client)
+        response = collection.query.near_vector(
+            near_vector=query_vector,
+            limit=50
+        )
+        items_to_process = response.objects
+    else:
+        logging.info("Starting full collection iteration...")
+        items_to_process = collection.iterator()
+
+    mapped_results = []
+    logging.info("Starting MAP step...")
+    for item in items_to_process:
+        chunk_content = item.properties['chunk_content']
+        map_prompt = map_prompt_template.format(chunk_content=chunk_content, entity_name=entity_name)
+        try:
+            response = openai_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": "You are an expert data extractor."}, {"role": "user", "content": map_prompt}],
+                timeout=30
+            )
+            extracted_info = response.choices[0].message.content
+            if extracted_info and "no relevant information" not in extracted_info.lower():
+                mapped_results.append(extracted_info)
+        except Exception as e:
+            logging.warning(f"Skipping a chunk due to an error during map stage: {e}")
+            continue
+
+    if not mapped_results:
+        return f"Could not find any relevant information for '{entity_name}'." if entity_name else "Could not find any relevant information in the documents."
+
+    logging.info(f"MAP step complete. Found {len(mapped_results)} relevant pieces of information.")
+
+    logging.info("Starting REDUCE step...")
+    combined_text = "\n---\n".join(mapped_results)
+    reduce_prompt = reduce_prompt_template.format(combined_text=combined_text, entity_name=entity_name)
+
+    try:
+        response_stream = openai_client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": "You are an expert report writer that responds in Markdown."}, {"role": "user", "content": reduce_prompt}],
+            stream=True
+        )
+        logging.info("REDUCE step complete. Streaming final report.")
+        return response_stream
+    except Exception as e:
+        logging.error(f"Error during REDUCE step: {e}")
+        return "An error occurred while finalizing the report. Please check the logs."
+
+def generate_timeline(weaviate_client, openai_client, model="gpt-4", mode="map-reduce"):
+    """Generates a chronological timeline of events from stored documents."""
+    if mode == "map-reduce":
+        # Use map-reduce logic for best accuracy
+        map_prompt_template = """
+        You are a data extractor. Your task is to find and list any events with specific dates or clear time references (e.g., "last week," "January 2023") from the following text. For each event, provide the date and a brief description.
+        Text:
+        "{chunk_content}"
+        """
+        reduce_prompt_template = """
+        You are a historian. You have been given an unordered list of events extracted from various documents. Your task is to organize these events into a single, coherent, and chronologically sorted timeline. Merge duplicates, format each event with the date first.
+        Here is the unsorted list of events:
+        ---
+        {combined_text}
+        ---
+        """
+        return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model)
+    else:
+        # Use simple context aggregation (fast, less accurate)
+        context = _collect_context("Create a chronological timeline of key events.", weaviate_client, openai_client, limit=40)
+        if not context:
+            return "Error: No data available to generate a timeline."
+        prompt = (
+            "Using only the following context, create a chronological timeline of key events.
+            \n\n"
+            f"Context:\n{context}\n\nTimeline:"
+        )
+        response = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that writes timelines based on provided documentation."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return response.choices[0].message.content
+
+def generate_report(report_type, weaviate_client, openai_client, model="gpt-4", mode="map-reduce"):
+    """Generates a specific report type using stored documents."""
+    if mode == "map-reduce":
+        map_prompt_template = """
+        You are a data extractor. Your task is to read the following text and extract any information relevant to the topic of '{entity_name}'. This could include events, statements, conflicts, communications, etc.
+        Text:
+        "{chunk_content}"
+        """
+        reduce_prompt_template = """
+        You are a professional analyst. You have been given a collection of notes and information related to the topic of '{entity_name}'. Your task is to synthesize this information into a comprehensive, well-structured report in Markdown.
+        Here is the collection of information:
+        ---
+        {combined_text}
+        ---
+        """
+        return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=report_type)
+    else:
+        query = f"Generate a {report_type} based on the documentation."
+        context = _collect_context(query, weaviate_client, openai_client, limit=40)
+        if not context:
+            return f"Error: No data available to generate {report_type}."
+        prompt = (
+            f"Using only the following context, write a {report_type}.
+            \n\n"
+            f"Context:\n{context}\n\n{report_type}:"
+        )
+        response = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that generates analytical reports based on provided context."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return response.choices[0].message.content
+
+def summarize_entity(entity, weaviate_client, openai_client, model="gpt-4", mode="map-reduce"):
+    """Summarizes information about a specific entity from the documents."""
+    if mode == "map-reduce":
+        map_prompt_template = """
+        You are a data extractor. Your task is to read the following text and extract any information, events, or descriptions related to the entity: '{entity_name}'. If the text is not relevant to the entity, ignore it.
+        Text:
+        "{chunk_content}"
+        """
+        reduce_prompt_template = """
+        You are a biographer. You have been given a collection of notes and mentions about '{entity_name}'. Your task is to synthesize this information into a concise and well-structured summary in Markdown.
+        Here is the collection of notes:
+        ---
+        {combined_text}
+        ---
+        """
+        return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=entity)
+    else:
+        query = f"Summarize all available information about {entity}."
+        context = _collect_context(query, weaviate_client, openai_client, limit=40)
+        if not context:
+            return f"Error: No data available to summarize {entity}."
+        prompt = (
+            f"Using only the following context, provide a concise summary about {entity}.
+            \n\n"
+            f"Context:\n{context}\n\nSummary:"
+        )
+        response = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes entities based on provided documentation."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return response.choices[0].message.content
+
 def sanitize_name(name):
     """Removes characters that are problematic for API calls or filenames."""
-    return re.sub(r"[/'\"]", "", name)
+    return re.sub(r"[/'"]", "", name)
 
 def create_pdf(text_content, summary=None, sources=None):
     """Generates a PDF from text content, an optional summary, and a list of sources."""
@@ -188,6 +392,7 @@ def create_pdf(text_content, summary=None, sources=None):
     except Exception as e:
         logging.error("Failed to generate PDF.", exc_info=True)
         return b"Error: Could not generate the PDF file."
+
 def fetch_report(report_name):
     """Fetches a pre-generated report from the 'GeneratedReports' Airtable table."""
     logging.info(f"Fetching report '{report_name}' from Airtable.")
@@ -200,4 +405,3 @@ def fetch_report(report_name):
     except Exception as e:
         logging.error(f"Failed to fetch report '{report_name}': {e}")
         return f"Error: Could not fetch report '{report_name}'."
-

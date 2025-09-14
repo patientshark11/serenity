@@ -4,7 +4,7 @@ Create a Render *Cron Job* service that runs:
 """
 import os
 import sys
-from streamlit_app import ingest_airtable_to_weaviate  # reuse the same function
+from backend import ingest_airtable_to_weaviate
 
 if __name__ == "__main__":
     try:
