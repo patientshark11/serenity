@@ -424,13 +424,20 @@ def create_pdf(text_content, summary=None, sources=None):
         return b"Error: Could not generate the PDF file."
 
 def fetch_report(report_name):
-    """Fetches a pre-generated report from the 'GeneratedReports' Airtable table."""
+    """Fetches a pre-generated report from the Airtable reports table.
+
+    The table name defaults to ``"GeneratedReports"`` but can be overridden
+    via the ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable.
+    """
     logging.info(f"Fetching report '{report_name}' from Airtable.")
     try:
+        reports_table_name = os.environ.get(
+            "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
+        )
         reports_table = Table(
             os.environ["AIRTABLE_API_KEY"],
             os.environ["AIRTABLE_BASE_ID"],
-            "GeneratedReports",
+            reports_table_name,
         )
         record = reports_table.first(formula=f"{{Name}}='{report_name}'")
         if record:
