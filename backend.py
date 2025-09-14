@@ -160,11 +160,26 @@ def create_pdf(text_content, summary=None, sources=None):
                 pdf.ln(5)
             pdf.set_text_color(0, 0, 0)
 
-        pdf_bytes = pdf.output()
+        pdf_bytes = pdf.output(dest="S")
+        if isinstance(pdf_bytes, str):
+            pdf_bytes = pdf_bytes.encode("latin-1")
+        else:
+            pdf_bytes = bytes(pdf_bytes)
         logging.info("PDF generation successful.")
         return pdf_bytes
     except Exception as e:
         logging.error("Failed to generate PDF.", exc_info=True)
         return b"Error: Could not generate the PDF file."
+def fetch_report(report_name):
+    """Fetches a pre-generated report from the 'GeneratedReports' Airtable table."""
+    logging.info(f"Fetching report '{report_name}' from Airtable.")
+    try:
+        reports_table = Table(os.environ["AIRTABLE_API_KEY"], os.environ["AIRTABLE_BASE_ID"], "GeneratedReports")
+        record = reports_table.first(formula=f"{{ReportName}}='{report_name}'")
+        if record:
+            return record.get("fields", {}).get("Content", "Report content not found.")
+        return f"Report '{report_name}' not found."
+    except Exception as e:
+        logging.error(f"Failed to fetch report '{report_name}': {e}")
+        return f"Error: Could not fetch report '{report_name}'."
 
-# ... rest of file unchanged
