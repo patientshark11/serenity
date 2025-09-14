@@ -65,7 +65,7 @@ def generate_and_save_report(reports_table, name, generator_func):
                 print(f"PDF generated for '{name}' ({len(pdf_bytes)} bytes).")
             except Exception as pdf_err:
                 print(f"Failed to generate PDF for '{name}': {pdf_err}", file=sys.stderr)
-        
+
         record_to_save = {
             "Name": sanitized_name,
             "Content": report_content,
@@ -81,13 +81,15 @@ def generate_and_save_report(reports_table, name, generator_func):
             )
         except Exception as upsert_err:
             print(
-                f"ERROR: Failed to save report for '{name}' to Airtable: {upsert_err}",
+                f"ERROR: Failed to save report for '{name}' to Airtable: {getattr(upsert_err, 'body', upsert_err)}",
                 file=sys.stderr,
             )
-            raise
+            return False
         print(f"Successfully generated and saved report for '{name}'")
+        return True
     except Exception as e:
         print(f"ERROR: Failed to generate or save report for '{name}'. Error: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        return False
 
 def main():
     print("--- Starting nightly job: Data Sync and Report Generation ---")
@@ -133,8 +135,16 @@ def main():
         reports_to_generate[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(p, weaviate_client, openai_client, mode=REPORT_MODE)
 
     # --- 5. Generate & Save Reports ---
+    failed_reports = []
     for name, generator_func in reports_to_generate.items():
-        generate_and_save_report(reports_table, name, generator_func)
+        if not generate_and_save_report(reports_table, name, generator_func):
+            failed_reports.append(name)
+
+    if failed_reports:
+        print(
+            "The following reports failed to generate or save: " + ", ".join(failed_reports),
+            file=sys.stderr,
+        )
 
     print("\n--- Nightly job finished ---")
     if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
