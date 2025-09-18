@@ -77,15 +77,17 @@ def generate_and_save_report(reports_table, name, generator_func):
             except Exception as pdf_err:
                 logging.error("Failed to generate PDF for '%s': %s", name, pdf_err)
 
+        report_name_field = os.environ.get("AIRTABLE_REPORT_NAME_FIELD", "Name")
+
         record_to_save = {
-            "Name": sanitized_name,
+            report_name_field: sanitized_name,
             "Content": report_content,
             "LastGenerated": datetime.now().isoformat(),
         }
         if GENERATE_PDF and attachment:
             record_to_save["PDF"] = [attachment]
 
-        key_fields = ["Name"]
+        key_fields = [report_name_field]
         try:
             response = reports_table.batch_upsert(
                 [{"fields": record_to_save}], key_fields=key_fields
