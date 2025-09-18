@@ -102,7 +102,30 @@ def ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=None,
             logging.error(f"Batch import finished with {batch.number_errors} errors.")
         return "Sync successful!"
     finally:
-        api.close()
+        close_airtable_api(api)
+
+
+def close_airtable_api(api):
+    """Attempt to close an Airtable Api instance if supported."""
+
+    if api is None:
+        return
+
+    close_method = getattr(api, "close", None)
+    if callable(close_method):
+        try:
+            close_method()
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            logging.warning(f"Failed to close Airtable API cleanly: {exc}")
+        return
+
+    session = getattr(api, "session", None)
+    if hasattr(session, "close"):
+        try:
+            session.close()
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            logging.warning(f"Failed to close Airtable session cleanly: {exc}")
+
 
 def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde_model=None):
     """Performs a search using the HyDE technique.
@@ -504,7 +527,7 @@ def fetch_report(report_name, api=None):
         return f"Error: Could not fetch report '{report_name}'."
     finally:
         if manage_api:
-            api.close()
+            close_airtable_api(api)
 
 
 def fetch_reports(report_names):
@@ -525,4 +548,4 @@ def fetch_reports(report_names):
     try:
         return {name: fetch_report(name, api=api) for name in report_names}
     finally:
-        api.close()
+        close_airtable_api(api)
