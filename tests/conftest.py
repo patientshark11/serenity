@@ -37,11 +37,22 @@ sys.modules["weaviate.classes.init"] = init_module
 pyairtable_module = types.ModuleType("pyairtable")
 
 class DummyTable:
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(self, fields=("Name",)):
+        self._fields = fields
 
     def first(self, formula=None):
         return {"fields": {"Content": "Mocked content"}}
+
+    def schema(self):
+        class Field:
+            def __init__(self, name):
+                self.name = name
+
+        class Schema:
+            def __init__(self, names):
+                self.fields = [Field(n) for n in names]
+
+        return Schema(self._fields)
 
 class DummyApi:
     instances = 0
