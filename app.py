@@ -39,6 +39,10 @@ def get_or_create_session_state():
         st.session_state.run_summary = False
     if "run_report" not in st.session_state:
         st.session_state.run_report = False
+    if "person_select_sidebar" not in st.session_state:
+        st.session_state.person_select_sidebar = ""
+    if "report_select_sidebar" not in st.session_state:
+        st.session_state.report_select_sidebar = ""
 
 get_or_create_session_state()
 
@@ -62,6 +66,24 @@ with st.sidebar:
     with col2:
         logo_path = os.environ.get("APP_LOGO_PATH", "logo.png")
         st.image(logo_path, width=150)
+
+    def _on_person_select_change():
+        selected_person = st.session_state.get("person_select_sidebar", "")
+        if selected_person:
+            st.session_state.entity_name_to_summarize = selected_person
+            st.session_state.run_summary = True
+        else:
+            st.session_state.run_summary = False
+            st.session_state.entity_name_to_summarize = ""
+
+    def _on_report_select_change():
+        selected_report = st.session_state.get("report_select_sidebar", "")
+        if selected_report:
+            st.session_state.report_type_to_generate = selected_report
+            st.session_state.run_report = True
+        else:
+            st.session_state.run_report = False
+            st.session_state.report_type_to_generate = ""
 
     with st.expander("⚙️ Settings"):
         env_model = os.environ.get("OPENAI_COMPLETION_MODEL")
@@ -88,15 +110,21 @@ with st.sidebar:
         st.session_state.run_timeline = True
 
     key_people = ["", "Kim", "Diego", "Kim's family/friends", "YWCA Staff", "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"]
-    person_to_summarize = st.selectbox("Select a person to summarize:", key_people, disabled=model_is_unavailable)
-    if person_to_summarize:
-        st.session_state.entity_name_to_summarize = person_to_summarize
-        st.session_state.run_summary = True
+    st.selectbox(
+        "Select a person to summarize:",
+        key_people,
+        key="person_select_sidebar",
+        on_change=_on_person_select_change,
+        disabled=model_is_unavailable,
+    )
 
-    report_type_input = st.selectbox("Select a report:", ["", "Conflict Report", "Legal Communication Summary"], key="report_select_sidebar", disabled=model_is_unavailable)
-    if report_type_input:
-        st.session_state.report_type_to_generate = report_type_input
-        st.session_state.run_report = True
+    st.selectbox(
+        "Select a report:",
+        ["", "Conflict Report", "Legal Communication Summary"],
+        key="report_select_sidebar",
+        on_change=_on_report_select_change,
+        disabled=model_is_unavailable,
+    )
 
     st.divider()
     st.caption("Reports are generated daily. Use this to force an immediate update.")
@@ -178,7 +206,7 @@ else:
     model_is_unavailable = st.session_state.settings["openai_model"] == "GPT-5 (Not Yet Available)"
 
     # Analysis tool action logic
-    def display_fetched_report(sanitized_report_name, summary_text):
+    def display_fetched_report(sanitized_report_name, summary_text, *, reset_widget_key=None):
         """Helper to fetch, display, and store a pre-generated report."""
         if not connect_to_backend(): return
 
@@ -195,6 +223,8 @@ else:
             "id": str(uuid.uuid4()),
             "pdf": pdf_bytes,
         })
+        if reset_widget_key:
+            st.session_state[reset_widget_key] = ""
         st.rerun()
 
     if st.session_state.get("run_timeline"):
@@ -207,13 +237,13 @@ else:
         st.session_state.run_summary = False
         report_name = f"Summary for {entity_name}"
         sanitized_name = backend.sanitize_name(report_name)
-        display_fetched_report(sanitized_name, f"Summary for {entity_name}")
+        display_fetched_report(sanitized_name, f"Summary for {entity_name}", reset_widget_key="person_select_sidebar")
 
     if st.session_state.get("run_report"):
         report_type = st.session_state.report_type_to_generate
         st.session_state.run_report = False
         sanitized_name = backend.sanitize_name(report_type)
-        display_fetched_report(sanitized_name, f"{report_type}")
+        display_fetched_report(sanitized_name, f"{report_type}", reset_widget_key="report_select_sidebar")
 
     # Main Q&A chat input
     if prompt := st.chat_input("Ask a question about your documentation...", disabled=model_is_unavailable):
