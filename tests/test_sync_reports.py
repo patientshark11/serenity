@@ -85,6 +85,37 @@ def test_generate_and_save_report_raises_on_upsert_failure():
         generate_and_save_report(table, "Sample Person", generator_func)
 
 
+def test_generate_and_save_report_supports_streaming_chunks():
+    table = DummyTable()
+
+    class FakeDelta:
+        def __init__(self, content):
+            self.content = content
+
+    class FakeChoice:
+        def __init__(self, content):
+            self.delta = FakeDelta(content)
+            self.message = None
+
+    class FakeChunk:
+        def __init__(self, content):
+            self.choices = [FakeChoice(content)]
+
+    def generator_func():
+        def _stream():
+            yield FakeChunk("Hello ")
+            yield FakeChunk("world")
+            yield FakeChunk(None)
+
+        return _stream()
+
+    generate_and_save_report(table, "Streamed", generator_func)
+
+    fields = table.upserts[0][0][0]["fields"]
+    assert fields["Name"] == backend.sanitize_name("Streamed")
+    assert fields["Content"] == "Hello world"
+
+
 def test_get_key_people_returns_airtable_results(monkeypatch):
     monkeypatch.setenv("AIRTABLE_API_KEY", "key")
     monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
