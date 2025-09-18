@@ -44,15 +44,18 @@ class DummyTable:
         return {"fields": {"Content": "Mocked content"}}
 
     def schema(self):
-        class Field:
-            def __init__(self, name):
-                self.name = name
-
-        class Schema:
-            def __init__(self, names):
-                self.fields = [Field(n) for n in names]
-
-        return Schema(self._fields)
+        return {
+            "id": "tblDummy",
+            "name": "Dummy",
+            "fields": [
+                {
+                    "id": f"fld{index}",
+                    "name": field_name,
+                    "type": "singleLineText",
+                }
+                for index, field_name in enumerate(self._fields)
+            ],
+        }
 
 class DummyApi:
     instances = 0
