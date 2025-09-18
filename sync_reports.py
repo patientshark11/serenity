@@ -45,8 +45,7 @@ def get_key_people():
     except Exception as e:
         print(f"Could not fetch key people from Airtable, falling back to static list. Error: {e}", file=sys.stderr)
     finally:
-        if api:
-            api.close()
+        backend.close_airtable_api(api)
     # Fallback static list
     return [
         "Kim", "Diego", "Kim's family/friends", "YWCA Staff",
@@ -161,8 +160,7 @@ def main():
             f"FATAL: Could not connect to '{reports_table_name}' table in Airtable. Aborting job. Error: {e}",
             file=sys.stderr,
         )
-        if api:
-            api.close()
+        backend.close_airtable_api(api)
         if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
             weaviate_client.close()
         sys.exit(1)
@@ -198,8 +196,7 @@ def main():
         )
 
     print("\n--- Nightly job finished ---")
-    if api:
-        api.close()
+    backend.close_airtable_api(api)
     if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
         weaviate_client.close()
 
