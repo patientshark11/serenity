@@ -17,6 +17,7 @@ import backend
 import openai
 import traceback
 import base64
+from collections.abc import Mapping
 from pyairtable import Api
 from datetime import datetime
 
@@ -52,14 +53,96 @@ def get_key_people():
         "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"
     ]
 
+def _extract_text_fragment(obj, *, _seen=None):
+    """Recursively extract text content from OpenAI streaming chunks."""
+
+    if obj is None:
+        return ""
+
+    if isinstance(obj, str):
+        return obj
+
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="ignore")
+
+    if _seen is None:
+        _seen = set()
+
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return ""
+    _seen.add(obj_id)
+
+    pieces = []
+
+    if isinstance(obj, Mapping):
+        for key in ("content", "text", "value", "delta", "message"):
+            if key in obj:
+                pieces.append(_extract_text_fragment(obj[key], _seen=_seen))
+        if not pieces:
+            for value in obj.values():
+                pieces.append(_extract_text_fragment(value, _seen=_seen))
+        return "".join(piece for piece in pieces if piece)
+
+    if isinstance(obj, (list, tuple, set)):
+        for item in obj:
+            pieces.append(_extract_text_fragment(item, _seen=_seen))
+        return "".join(piece for piece in pieces if piece)
+
+    for attr in ("content", "text", "value", "delta", "message", "choices"):
+        if hasattr(obj, attr):
+            pieces.append(
+                _extract_text_fragment(getattr(obj, attr), _seen=_seen)
+            )
+
+    if not pieces:
+        try:
+            iterator = iter(obj)
+        except TypeError:
+            return ""
+        else:
+            for item in iterator:
+                pieces.append(_extract_text_fragment(item, _seen=_seen))
+
+    return "".join(piece for piece in pieces if piece)
+
+
+def _stringify_report_content(raw_content):
+    """Convert streamed or static report content into a single string."""
+
+    if raw_content is None:
+        return ""
+
+    if isinstance(raw_content, str):
+        return raw_content
+
+    if isinstance(raw_content, bytes):
+        return raw_content.decode("utf-8", errors="ignore")
+
+    try:
+        iterator = iter(raw_content)
+    except TypeError:
+        return str(raw_content)
+
+    pieces = []
+    for chunk in iterator:
+        text = _extract_text_fragment(chunk)
+        if text:
+            pieces.append(text)
+
+    combined = "".join(pieces)
+    if combined:
+        return combined
+
+    return str(raw_content)
+
+
 def generate_and_save_report(reports_table, name, generator_func):
     sanitized_name = backend.sanitize_name(name)
     print(f"\nGenerating report: '{name}' (Sanitized: '{sanitized_name}')...")
     try:
         report_content = generator_func()
-        # If report_content is a streamed object, convert to string
-        if not isinstance(report_content, str):
-            report_content = "".join(str(c) for c in report_content)
+        report_content = _stringify_report_content(report_content)
 
         if "error" in report_content.lower() or "could not find" in report_content.lower():
             print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
