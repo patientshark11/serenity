@@ -14,6 +14,19 @@ def test_create_pdf_returns_bytes():
     assert len(result) > 0
 
 
+def test_create_pdf_emits_no_deprecation_warnings():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        result = backend.create_pdf(
+            "Body",
+            summary="Summary",
+            sources=[{"title": "Source", "url": "https://example.com"}],
+        )
+
+    assert isinstance(result, bytes)
+    assert not any(w.category is DeprecationWarning for w in caught)
+
+
 def test_fetch_report_returns_content(mock_airtable):
     content = backend.fetch_report("Any")
     assert content == "Mocked content"

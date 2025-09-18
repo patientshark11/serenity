@@ -6,7 +6,7 @@ import uuid
 import re
 import logging
 import json
-from fpdf import FPDF
+from fpdf import FPDF, XPos, YPos
 from io import BytesIO
 from weaviate.classes.config import Configure, Property, DataType
 from weaviate.classes.init import Auth
@@ -391,31 +391,46 @@ def create_pdf(text_content, summary=None, sources=None):
     try:
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", size=12)
+        pdf.set_font("Helvetica", size=12)
 
         if summary:
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(0, 10, summary.encode('latin-1', 'replace').decode('latin-1'), 0, 1, 'C')
+            pdf.set_font("Helvetica", 'B', 16)
+            pdf.cell(
+                0,
+                10,
+                summary.encode('latin-1', 'replace').decode('latin-1'),
+                border=0,
+                align='C',
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
             pdf.ln(10)
 
-        pdf.set_font("Arial", size=12)
+        pdf.set_font("Helvetica", size=12)
         pdf.multi_cell(0, 10, text_content.encode('latin-1', 'replace').decode('latin-1'))
         pdf.ln(5)
 
         if sources:
-            pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, "Sources", 0, 1)
-            pdf.set_font("Arial", size=12)
+            pdf.set_font("Helvetica", 'B', 14)
+            pdf.cell(
+                0,
+                10,
+                "Sources",
+                border=0,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
+            pdf.set_font("Helvetica", size=12)
             for source in sources:
                 title = source.get('title', 'Unknown Source').encode('latin-1', 'replace').decode('latin-1')
                 url = source.get('url', '')
                 pdf.set_text_color(0, 0, 255)
-                pdf.set_font('Arial', 'U', 12)
+                pdf.set_font('Helvetica', 'U', 12)
                 pdf.cell(0, 7, f"- {title}", link=url)
                 pdf.ln(5)
             pdf.set_text_color(0, 0, 0)
 
-        pdf_bytes = pdf.output(dest="S")
+        pdf_bytes = pdf.output()
         if isinstance(pdf_bytes, str):
             pdf_bytes = pdf_bytes.encode("latin-1")
         else:
