@@ -142,9 +142,22 @@ for message in st.session_state.messages:
                 st.markdown(f"- [{source['title']}]({source['url']})")
 
         if message["role"] == "assistant":
-            pdf_bytes = backend.create_pdf(message["content"], summary=message.get("summary"), sources=message.get("sources"))
+            pdf_bytes = message.get("pdf")
+            if pdf_bytes is None:
+                pdf_bytes = backend.create_pdf(
+                    message["content"],
+                    summary=message.get("summary"),
+                    sources=message.get("sources"),
+                )
+                message["pdf"] = pdf_bytes
             # Use the unique message ID for the key and remove the incorrect bytes() wrapper
-            st.download_button("Export as PDF", pdf_bytes, f"{message.get('summary', 'response')}.pdf", "application/pdf", key=f"pdf_{message.get('id', str(uuid.uuid4()))}")
+            st.download_button(
+                "Export as PDF",
+                pdf_bytes,
+                f"{message.get('summary', 'response')}.pdf",
+                "application/pdf",
+                key=f"pdf_{message.get('id', str(uuid.uuid4()))}"
+            )
 
 # Check for connections before allowing chat
 required_env_vars = [
@@ -174,7 +187,14 @@ else:
                 report_content = backend.fetch_report(sanitized_report_name)
                 st.write(report_content)
 
-        st.session_state.messages.append({"role": "assistant", "content": report_content, "summary": summary_text, "id": str(uuid.uuid4())})
+        pdf_bytes = backend.create_pdf(report_content, summary=summary_text)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": report_content,
+            "summary": summary_text,
+            "id": str(uuid.uuid4()),
+            "pdf": pdf_bytes,
+        })
         st.rerun()
 
     if st.session_state.get("run_timeline"):
@@ -222,6 +242,14 @@ else:
                     for source in sources:
                         st.markdown(f"- [{source['title']}]({source['url']})")
 
-        message = {"role": "assistant", "content": full_response, "summary": summary, "sources": sources, "id": str(uuid.uuid4())}
+        pdf_bytes = backend.create_pdf(full_response, summary=summary, sources=sources)
+        message = {
+            "role": "assistant",
+            "content": full_response,
+            "summary": summary,
+            "sources": sources,
+            "id": str(uuid.uuid4()),
+            "pdf": pdf_bytes,
+        }
         st.session_state.messages.append(message)
         st.rerun()
