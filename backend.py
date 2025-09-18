@@ -430,7 +430,9 @@ def fetch_report(report_name, api=None):
     """Fetches a pre-generated report from the Airtable reports table.
 
     The table name defaults to ``"GeneratedReports"`` but can be overridden
-    via the ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable.
+    via the ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable. The field
+    containing the report name defaults to ``"Name"`` and can be overridden
+    via ``AIRTABLE_REPORT_NAME_FIELD``.
 
     Parameters
     ----------
@@ -448,22 +450,40 @@ def fetch_report(report_name, api=None):
         reports_table_name = os.environ.get(
             "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
         )
+        report_name_field = os.getenv("AIRTABLE_REPORT_NAME_FIELD", "Name")
         reports_table = api.table(
             os.environ["AIRTABLE_BASE_ID"],
             reports_table_name,
         )
 
+        # Ensure the configured report name field exists in the Airtable table
+        try:
+            table_fields = {field.name for field in reports_table.schema().fields}
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not retrieve schema for table '{reports_table_name}': {e}"
+            ) from e
+
+        if report_name_field not in table_fields:
+            raise ValueError(
+                f"Field '{report_name_field}' not found in Airtable table '{reports_table_name}'."
+            )
+
         sanitized = sanitize_name(report_name)
         if sanitized != report_name:
             escaped_raw = report_name.replace("'", "\\'")
-            formula = f"OR({{Name}}='{sanitized}', {{Name}}='{escaped_raw}')"
+            formula = (
+                f"OR({{{report_name_field}}}='{sanitized}', {{{report_name_field}}}='{escaped_raw}')"
+            )
         else:
-            formula = f"{{Name}}='{sanitized}'"
+            formula = f"{{{report_name_field}}}='{sanitized}'"
 
         record = reports_table.first(formula=formula)
         if record:
             return record.get("fields", {}).get("Content", "Report content not found.")
         return f"Report '{report_name}' not found."
+    except ValueError:
+        raise
     except Exception as e:
         logging.error(f"Failed to fetch report '{report_name}': {e}")
         return f"Error: Could not fetch report '{report_name}'."

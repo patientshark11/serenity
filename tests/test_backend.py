@@ -1,4 +1,5 @@
 import warnings
+import pytest
 import backend
 
 
@@ -18,6 +19,42 @@ def test_fetch_report_returns_content(mock_airtable):
     assert content == "Mocked content"
 
 
+def test_fetch_report_missing_field(monkeypatch):
+    class DummyTable:
+        def first(self, formula=None):
+            raise AssertionError("should not query when field missing")
+
+        def schema(self):
+            class Field:
+                def __init__(self, name):
+                    self.name = name
+
+            class Schema:
+                fields = [Field("Name")]
+
+            return Schema()
+
+    class DummyApi:
+        def __init__(self, api_key):
+            pass
+
+        def table(self, base_id, table_name):
+            return DummyTable()
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
+    monkeypatch.setenv("AIRTABLE_REPORT_NAME_FIELD", "Missing")
+    monkeypatch.setattr(backend, "Api", DummyApi)
+
+    with pytest.raises(ValueError) as exc:
+        backend.fetch_report("Any")
+
+    assert "Field 'Missing' not found" in str(exc.value)
+
+
 def test_fetch_report_sanitizes_name_in_formula(monkeypatch):
     captured = {}
 
@@ -25,6 +62,16 @@ def test_fetch_report_sanitizes_name_in_formula(monkeypatch):
         def first(self, formula=None):
             captured["formula"] = formula
             return {"fields": {"Content": "Mocked content"}}
+
+        def schema(self):
+            class Field:
+                def __init__(self, name):
+                    self.name = name
+
+            class Schema:
+                fields = [Field("Name")]
+
+            return Schema()
 
     class DummyApi:
         def __init__(self, api_key):
@@ -54,6 +101,16 @@ def test_fetch_reports_uses_single_api_and_no_resource_warning(monkeypatch):
     class DummyTable:
         def first(self, formula=None):
             return {"fields": {"Content": "Mocked content"}}
+
+        def schema(self):
+            class Field:
+                def __init__(self, name):
+                    self.name = name
+
+            class Schema:
+                fields = [Field("Name")]
+
+            return Schema()
 
     class DummyApi:
         instances = 0
