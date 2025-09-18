@@ -120,7 +120,7 @@ with st.sidebar:
                             f"Sync failed with return code {result.returncode}"
                         )
                         if result.stdout:
-                            st.error(result.stdout)
+                            st.info(result.stdout)
                         if result.stderr:
                             st.error(result.stderr)
                 except Exception as e:
