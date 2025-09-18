@@ -38,6 +38,25 @@ def test_generate_and_save_report_sends_base64_pdf(monkeypatch):
     assert decoded == expected_pdf
 
 
+def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
+    table = DummyTable()
+
+    def generator_func():
+        return "Report body"
+
+    monkeypatch.setenv("AIRTABLE_REPORT_NAME_FIELD", "ReportLabel")
+
+    generate_and_save_report(table, "Custom Person", generator_func)
+
+    records, key_fields = table.upserts[0]
+    fields = records[0]["fields"]
+
+    assert fields["ReportLabel"] == backend.sanitize_name("Custom Person")
+    assert "Name" not in fields
+    assert key_fields == ["ReportLabel"]
+    assert "PDF" in fields
+
+
 def test_generate_and_save_report_attachment_structure():
     table = DummyTable()
 
