@@ -32,6 +32,38 @@ def test_fetch_report_returns_content(mock_airtable):
     assert content == "Mocked content"
 
 
+def test_fetch_report_accepts_dict_schema(monkeypatch):
+    class DummyTable:
+        def first(self, formula=None):
+            return {"fields": {"Content": "Mocked content"}}
+
+        def schema(self):
+            return {
+                "fields": [
+                    {"name": "Name"},
+                    {"name": "Content"},
+                ]
+            }
+
+    class DummyApi:
+        def __init__(self, api_key):
+            self.closed = False
+
+        def table(self, base_id, table_name):
+            return DummyTable()
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
+    monkeypatch.setattr(backend, "Api", DummyApi)
+
+    content = backend.fetch_report("Any")
+
+    assert content == "Mocked content"
+
+
 def test_fetch_report_missing_field(monkeypatch):
     class DummyTable:
         def first(self, formula=None):
