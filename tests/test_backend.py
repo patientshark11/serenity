@@ -64,20 +64,51 @@ def test_fetch_report_accepts_dict_schema(monkeypatch):
     assert content == "Mocked content"
 
 
+def test_fetch_report_accepts_object_schema(monkeypatch):
+    class Field:
+        def __init__(self, name):
+            self.name = name
+
+    class DummyTable:
+        def first(self, formula=None):
+            return {"fields": {"Content": "Mocked content"}}
+
+        def schema(self):
+            class Schema:
+                fields = [Field("Name"), Field("Content")]
+
+            return Schema()
+
+    class DummyApi:
+        def __init__(self, api_key):
+            self.closed = False
+
+        def table(self, base_id, table_name):
+            return DummyTable()
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
+    monkeypatch.setattr(backend, "Api", DummyApi)
+
+    content = backend.fetch_report("Any")
+
+    assert content == "Mocked content"
+
+
 def test_fetch_report_missing_field(monkeypatch):
     class DummyTable:
         def first(self, formula=None):
             raise AssertionError("should not query when field missing")
 
         def schema(self):
-            class Field:
-                def __init__(self, name):
-                    self.name = name
-
-            class Schema:
-                fields = [Field("Name")]
-
-            return Schema()
+            return {
+                "fields": [
+                    {"name": "Name"},
+                ],
+            }
 
     class DummyApi:
         def __init__(self, api_key):
@@ -109,14 +140,11 @@ def test_fetch_report_sanitizes_name_in_formula(monkeypatch):
             return {"fields": {"Content": "Mocked content"}}
 
         def schema(self):
-            class Field:
-                def __init__(self, name):
-                    self.name = name
-
-            class Schema:
-                fields = [Field("Name")]
-
-            return Schema()
+            return {
+                "fields": [
+                    {"name": "Name"},
+                ],
+            }
 
     class DummyApi:
         def __init__(self, api_key):
@@ -148,14 +176,11 @@ def test_fetch_reports_uses_single_api_and_no_resource_warning(monkeypatch):
             return {"fields": {"Content": "Mocked content"}}
 
         def schema(self):
-            class Field:
-                def __init__(self, name):
-                    self.name = name
-
-            class Schema:
-                fields = [Field("Name")]
-
-            return Schema()
+            return {
+                "fields": [
+                    {"name": "Name"},
+                ],
+            }
 
     class DummyApi:
         instances = 0

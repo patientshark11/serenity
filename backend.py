@@ -1,4 +1,5 @@
 import os
+from collections.abc import Mapping
 import weaviate
 import openai
 from pyairtable import Api
@@ -505,29 +506,55 @@ def fetch_report(report_name, api=None):
         def _extract_field_names(schema):
             """Return a set of field names from a schema object or mapping."""
 
-            if isinstance(schema, dict):
-                fields_source = schema.get("fields", [])
-            else:
-                fields_source = getattr(schema, "fields", None)
-                if fields_source is None:
-                    if isinstance(schema, (list, tuple, set)):
-                        fields_source = schema
-                    else:
-                        fields_source = []
-
-            if isinstance(fields_source, dict):
-                fields_iter = fields_source.values()
-            else:
-                fields_iter = fields_source or []
-
             names = set()
-            for field in fields_iter:
-                if isinstance(field, dict):
-                    name = field.get("name")
+
+            def _iter_fields(candidate):
+                if candidate is None:
+                    return []
+                if isinstance(candidate, Mapping):
+                    return list(candidate.values())
+                if isinstance(candidate, (list, tuple, set)):
+                    return list(candidate)
+                return [candidate]
+
+            def _add_from(candidate):
+                for field in _iter_fields(candidate):
+                    name = None
+                    if isinstance(field, Mapping):
+                        name = field.get("name")
+                    else:
+                        getter = getattr(field, "get", None)
+                        if callable(getter):
+                            try:
+                                name = getter("name")
+                            except Exception:  # pragma: no cover - defensive
+                                name = None
+                        if not name:
+                            name = getattr(field, "name", None)
+                    if name:
+                        names.add(name)
+
+            if isinstance(schema, Mapping):
+                _add_from(schema.get("fields"))
+            else:
+                fields_attr = getattr(schema, "fields", None)
+                if fields_attr is not None:
+                    _add_from(fields_attr)
+
+                get_method = getattr(schema, "get", None)
+                if callable(get_method):
+                    try:
+                        _add_from(get_method("fields", None))
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+
+                if isinstance(schema, (list, tuple, set)):
+                    _add_from(schema)
                 else:
-                    name = getattr(field, "name", None)
-                if name:
-                    names.add(name)
+                    schema_dict = getattr(schema, "__dict__", None)
+                    if isinstance(schema_dict, dict) and "fields" in schema_dict:
+                        _add_from(schema_dict.get("fields"))
+
             return names
 
         table_fields = _extract_field_names(schema_info)
