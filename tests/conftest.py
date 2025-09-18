@@ -75,15 +75,27 @@ pyairtable_module.Api = DummyApi
 sys.modules["pyairtable"] = pyairtable_module
 
 fpdf_module = types.ModuleType("fpdf")
+
+
+class DummyXPos:
+    LMARGIN = object()
+
+
+class DummyYPos:
+    NEXT = object()
+
+
 class DummyFPDF:
     def add_page(self):
         pass
 
-    def set_font(self, *args, **kwargs):
-        pass
+    def set_font(self, family, *args, **kwargs):
+        if family == "Arial":
+            warnings.warn("Arial font fallback is deprecated", DeprecationWarning)
 
     def cell(self, *args, **kwargs):
-        pass
+        if len(args) > 4 or "ln" in kwargs:
+            warnings.warn("'ln' argument is deprecated", DeprecationWarning)
 
     def ln(self, *args, **kwargs):
         pass
@@ -94,9 +106,15 @@ class DummyFPDF:
     def set_text_color(self, *args, **kwargs):
         pass
 
-    def output(self, dest="S"):
+    def output(self, *args, **kwargs):
+        if "dest" in kwargs:
+            warnings.warn("'dest' argument is deprecated", DeprecationWarning)
         return b"PDF"
+
+
 fpdf_module.FPDF = DummyFPDF
+fpdf_module.XPos = DummyXPos
+fpdf_module.YPos = DummyYPos
 sys.modules["fpdf"] = fpdf_module
 
 import backend
