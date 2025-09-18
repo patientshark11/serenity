@@ -496,11 +496,41 @@ def fetch_report(report_name, api=None):
 
         # Ensure the configured report name field exists in the Airtable table
         try:
-            table_fields = {field.name for field in reports_table.schema().fields}
+            schema_info = reports_table.schema()
         except Exception as e:
             raise RuntimeError(
                 f"Could not retrieve schema for table '{reports_table_name}': {e}"
             ) from e
+
+        def _extract_field_names(schema):
+            """Return a set of field names from a schema object or mapping."""
+
+            if isinstance(schema, dict):
+                fields_source = schema.get("fields", [])
+            else:
+                fields_source = getattr(schema, "fields", None)
+                if fields_source is None:
+                    if isinstance(schema, (list, tuple, set)):
+                        fields_source = schema
+                    else:
+                        fields_source = []
+
+            if isinstance(fields_source, dict):
+                fields_iter = fields_source.values()
+            else:
+                fields_iter = fields_source or []
+
+            names = set()
+            for field in fields_iter:
+                if isinstance(field, dict):
+                    name = field.get("name")
+                else:
+                    name = getattr(field, "name", None)
+                if name:
+                    names.add(name)
+            return names
+
+        table_fields = _extract_field_names(schema_info)
 
         if report_name_field not in table_fields:
             raise ValueError(
