@@ -110,6 +110,10 @@ with st.sidebar:
         st.session_state.run_timeline = True
 
     key_people = ["", "Kim", "Diego", "Kim's family/friends", "YWCA Staff", "Heather Ulrich", "DSS/Youth Villages", "Diego's mom"]
+    if st.session_state.get("reset_person_select_sidebar"):
+        st.session_state.person_select_sidebar = ""
+        st.session_state.pop("reset_person_select_sidebar")
+
     st.selectbox(
         "Select a person to summarize:",
         key_people,
@@ -117,6 +121,10 @@ with st.sidebar:
         on_change=_on_person_select_change,
         disabled=model_is_unavailable,
     )
+
+    if st.session_state.get("reset_report_select_sidebar"):
+        st.session_state.report_select_sidebar = ""
+        st.session_state.pop("reset_report_select_sidebar")
 
     st.selectbox(
         "Select a report:",
@@ -224,7 +232,7 @@ else:
             "pdf": pdf_bytes,
         })
         if reset_widget_key:
-            st.session_state[reset_widget_key] = ""
+            st.session_state[f"reset_{reset_widget_key}"] = True
         st.rerun()
 
     if st.session_state.get("run_timeline"):
