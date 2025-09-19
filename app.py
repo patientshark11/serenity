@@ -4,6 +4,7 @@ import backend
 import openai
 import uuid # Import uuid for unique keys
 import subprocess
+import hashlib
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -43,6 +44,10 @@ def get_or_create_session_state():
         st.session_state.person_select_sidebar = ""
     if "report_select_sidebar" not in st.session_state:
         st.session_state.report_select_sidebar = ""
+    if "last_prompt_hash" not in st.session_state:
+        st.session_state.last_prompt_hash = None
+    if "last_response" not in st.session_state:
+        st.session_state.last_response = None
 
 get_or_create_session_state()
 
@@ -259,33 +264,88 @@ else:
         with st.chat_message("user", avatar=user_avatar):
             st.write(prompt)
 
+        prompt_hash = hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
+        cached_payload = None
+        if st.session_state.last_prompt_hash == prompt_hash:
+            cached_payload = st.session_state.last_response
+
+        response_payload = None
         with st.chat_message("assistant", avatar=assistant_avatar):
-            with st.spinner("Thinking..."):
-                # Call the new HyDE search function from the backend
-                response, sources, summary = backend.generative_search(
-                    prompt,
-                    st.session_state.weaviate_client,
-                    st.session_state.openai_client,
-                    model=st.session_state.settings["openai_model"]
-                )
+            if cached_payload:
+                response_payload = cached_payload.copy()
+                full_response = response_payload.get("content", "")
+                st.write(full_response)
+                st.caption("Using cached response.")
+            else:
+                with st.spinner("Thinking..."):
+                    # Call the new HyDE search function from the backend
+                    response, sources, summary = backend.generative_search(
+                        prompt,
+                        st.session_state.weaviate_client,
+                        st.session_state.openai_client,
+                        model=st.session_state.settings["openai_model"]
+                    )
+                    sources = list(sources or [])
 
-                if isinstance(response, str):
-                    full_response = response
-                    st.write(full_response)
-                else:
-                    full_response = st.write_stream(response)
+                    if isinstance(response, str):
+                        full_response = response
+                        st.write(full_response)
+                    else:
+                        streamed_chunks = []
 
-                if sources:
-                    st.caption("Sources:")
-                    for source in sources:
-                        st.markdown(f"- [{source['title']}]({source['url']})")
+                        def _stream_and_cache():
+                            for chunk in response:
+                                streamed_chunks.append(chunk)
+                                yield chunk
 
-        pdf_bytes = backend.create_pdf(full_response, summary=summary, sources=sources)
+                        st.write_stream(_stream_and_cache())
+                        full_response = "".join(streamed_chunks)
+
+                response_payload = {
+                    "content": full_response,
+                    "summary": summary,
+                    "sources": sources,
+                }
+
+            sources_list = (response_payload.get("sources") or []) if response_payload else []
+            if sources_list:
+                st.caption("Sources:")
+                for source in sources_list:
+                    st.markdown(f"- [{source['title']}]({source['url']})")
+
+        if response_payload is None:
+            response_payload = {
+                "content": cached_payload.get("content", "") if cached_payload else "",
+                "summary": cached_payload.get("summary") if cached_payload else None,
+                "sources": (cached_payload.get("sources") if cached_payload else []) or [],
+                "pdf": cached_payload.get("pdf") if cached_payload else None,
+            }
+
+        pdf_bytes = response_payload.get("pdf")
+        if pdf_bytes is None:
+            pdf_bytes = backend.create_pdf(
+                response_payload.get("content", ""),
+                summary=response_payload.get("summary"),
+                sources=response_payload.get("sources"),
+            )
+            response_payload["pdf"] = pdf_bytes
+
+        last_response_payload = response_payload.copy()
+        if last_response_payload.get("sources") is not None:
+            last_response_payload["sources"] = list(last_response_payload["sources"])
+
+        st.session_state.last_prompt_hash = prompt_hash
+        st.session_state.last_response = last_response_payload
+
+        message_sources = last_response_payload.get("sources")
+        if message_sources is not None:
+            message_sources = list(message_sources)
+
         message = {
             "role": "assistant",
-            "content": full_response,
-            "summary": summary,
-            "sources": sources,
+            "content": response_payload.get("content", ""),
+            "summary": response_payload.get("summary"),
+            "sources": message_sources,
             "id": str(uuid.uuid4()),
             "pdf": pdf_bytes,
         }
