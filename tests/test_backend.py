@@ -1,3 +1,4 @@
+import types
 import warnings
 import pytest
 import backend
@@ -30,6 +31,40 @@ def test_create_pdf_emits_no_deprecation_warnings():
 def test_fetch_report_returns_content(mock_airtable):
     content = backend.fetch_report("Any")
     assert content == "Mocked content"
+
+
+def test_fetch_report_defaults_to_generate_reports_table(monkeypatch):
+    captured = {}
+
+    class DummyTable:
+        def first(self, formula=None):
+            return {"fields": {"Content": "Mocked content"}}
+
+        def schema(self):
+            return {"fields": [{"name": "Name"}]}
+
+    class DummyApi:
+        def __init__(self, api_key):
+            pass
+
+        def table(self, base_id, table_name):
+            captured["base_id"] = base_id
+            captured["table_name"] = table_name
+            return DummyTable()
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "base")
+    monkeypatch.delenv("AIRTABLE_REPORTS_TABLE_NAME", raising=False)
+    monkeypatch.setattr(backend, "Api", DummyApi)
+
+    content = backend.fetch_report("Any")
+
+    assert content == "Mocked content"
+    assert captured["base_id"] == "base"
+    assert captured["table_name"] == "GenerateReports"
 
 
 def test_fetch_report_accepts_dict_schema(monkeypatch):
@@ -209,3 +244,87 @@ def test_fetch_reports_uses_single_api_and_no_resource_warning(monkeypatch):
     assert len(reports) == 3
     assert all(content == "Mocked content" for content in reports.values())
     assert len(w) == 0
+
+
+def test_map_reduce_query_handles_braces(monkeypatch):
+    class DummyObject(types.SimpleNamespace):
+        pass
+
+    class DummyCollection:
+        def __init__(self):
+            self.objects = [
+                DummyObject(properties={"chunk_content": "Chunk with {braces}"})
+            ]
+
+            class DummyQuery:
+                def __init__(self, outer):
+                    self._outer = outer
+
+                def near_vector(self, near_vector=None, limit=None):
+                    return types.SimpleNamespace(objects=self._outer.objects)
+
+            self.query = DummyQuery(self)
+
+        def iterator(self):
+            return iter(self.objects)
+
+    class DummyCollections:
+        def __init__(self):
+            self._collection = DummyCollection()
+
+        def exists(self, name):
+            return True
+
+        def get(self, name):
+            return self._collection
+
+    class DummyWeaviateClient:
+        def __init__(self):
+            self.collections = DummyCollections()
+
+    class DummyOpenAI:
+        def __init__(self):
+            self.prompts = []
+
+            class DummyCompletions:
+                def __init__(self, outer):
+                    self._outer = outer
+
+                def create(self, *, messages, stream=False, **kwargs):
+                    self._outer.prompts.append(messages[-1]["content"])
+                    if stream:
+                        return [{"choices": [{"delta": {"content": "Final"}}]}]
+                    return types.SimpleNamespace(
+                        choices=[
+                            types.SimpleNamespace(
+                                message=types.SimpleNamespace(
+                                    content="Mapped {info}"
+                                )
+                            )
+                        ]
+                    )
+
+            class DummyChat:
+                def __init__(self, outer):
+                    self.completions = DummyCompletions(outer)
+
+            self.chat = DummyChat(self)
+
+    monkeypatch.setattr(backend, "get_embedding", lambda *a, **k: [0])
+
+    openai_client = DummyOpenAI()
+    weaviate_client = DummyWeaviateClient()
+
+    result = backend._map_reduce_query(
+        weaviate_client,
+        openai_client,
+        "Map: {chunk_content}",
+        "Reduce: {combined_text} ({entity_name})",
+        model="gpt-4",
+        entity_name="Entity {Name}",
+    )
+
+    assert openai_client.prompts[0].endswith("Chunk with {braces}")
+    assert "Mapped {info}" in openai_client.prompts[-1]
+    assert "Entity {Name}" in openai_client.prompts[-1]
+    assert result == [{"choices": [{"delta": {"content": "Final"}}]}]

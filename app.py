@@ -202,7 +202,6 @@ required_env_vars = [
     "AIRTABLE_API_KEY",
     "AIRTABLE_BASE_ID",
     "AIRTABLE_TABLE_NAME",
-    "AIRTABLE_REPORTS_TABLE_NAME",
 ]
 if not all(os.environ.get(key) for key in required_env_vars):
     st.warning("Application is not fully configured. Please check environment variables.")
