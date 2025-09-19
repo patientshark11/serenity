@@ -21,5 +21,4 @@ if __name__ == "__main__":
         print({"status": "error", "error": str(e)}, file=sys.stderr)
         sys.exit(1)
     finally:
-        if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
-            weaviate_client.close()
+        backend.close_cached_weaviate_client()

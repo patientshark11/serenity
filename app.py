@@ -54,8 +54,7 @@ get_or_create_session_state()
 # --- 4. BACKEND INITIALIZATION ---
 def connect_to_backend():
     try:
-        if st.session_state.weaviate_client is None:
-            st.session_state.weaviate_client = backend.connect_to_weaviate()
+        st.session_state.weaviate_client = backend.connect_to_weaviate()
         if st.session_state.openai_client is None:
             st.session_state.openai_client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
         return True
