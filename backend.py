@@ -15,6 +15,61 @@ from weaviate.classes.init import Auth
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# --- Global API Usage Tracking ---
+class OpenAIUsageTracker:
+    """Tracks and limits OpenAI API usage during a run."""
+    
+    def __init__(self):
+        self.reset_counters()
+        self.max_embeddings = int(os.environ.get("MAX_EMBEDDINGS_PER_RUN", "500"))
+        self.max_completions = int(os.environ.get("MAX_COMPLETIONS_PER_RUN", "50"))
+        logging.info(f"OpenAI usage limits set - Embeddings: {self.max_embeddings}, Completions: {self.max_completions}")
+    
+    def reset_counters(self):
+        """Reset usage counters to zero."""
+        self.embedding_calls = 0
+        self.completion_calls = 0
+    
+    def check_embedding_limit(self):
+        """Check if embedding limit would be exceeded."""
+        if self.embedding_calls >= self.max_embeddings:
+            error_msg = f"Embedding API limit reached ({self.max_embeddings}). Aborting to prevent runaway costs."
+            logging.error(error_msg)
+            raise RuntimeError(error_msg)
+    
+    def check_completion_limit(self):
+        """Check if completion limit would be exceeded.""" 
+        if self.completion_calls >= self.max_completions:
+            error_msg = f"Completion API limit reached ({self.max_completions}). Aborting to prevent runaway costs."
+            logging.error(error_msg)
+            raise RuntimeError(error_msg)
+    
+    def track_embedding_call(self):
+        """Track an embedding API call."""
+        self.check_embedding_limit()
+        self.embedding_calls += 1
+        logging.info(f"OpenAI embedding call #{self.embedding_calls}/{self.max_embeddings}")
+    
+    def track_completion_call(self):
+        """Track a completion API call."""
+        self.check_completion_limit()
+        self.completion_calls += 1
+        logging.info(f"OpenAI completion call #{self.completion_calls}/{self.max_completions}")
+    
+    def log_summary(self):
+        """Log final usage summary."""
+        logging.info("=== OpenAI API Usage Summary ===")
+        logging.info(f"Embedding calls: {self.embedding_calls}/{self.max_embeddings}")
+        logging.info(f"Completion calls: {self.completion_calls}/{self.max_completions}")
+        logging.info(f"Total API calls: {self.embedding_calls + self.completion_calls}")
+
+# Global usage tracker instance
+_usage_tracker = OpenAIUsageTracker()
+
+def get_usage_tracker():
+    """Get the global usage tracker instance."""
+    return _usage_tracker
+
 def connect_to_weaviate():
     """Establishes a connection to the Weaviate instance."""
     try:
@@ -30,6 +85,7 @@ def connect_to_weaviate():
 
 def get_embedding(text, openai_client):
     """Generates an embedding for a given text using OpenAI."""
+    _usage_tracker.track_embedding_call()
     model_name = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
     response = openai_client.embeddings.create(input=[text.replace("\n", " ")], model=model_name)
     return response.data[0].embedding
@@ -159,6 +215,7 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
         f"{query}"
     )
     try:
+        _usage_tracker.track_completion_call()
         response = openai_client.chat.completions.create(
             model=hyde_model,
             messages=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": hyde_prompt}]
@@ -185,6 +242,7 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
         return "I couldn't find a relevant answer in the documentation.", [], ""
 
     # 4. Generate the final answer
+    _usage_tracker.track_completion_call()
     context = "\n---\n".join([obj.properties["chunk_content"] for obj in results])
     final_prompt = f"Based ONLY on the following context, please provide a comprehensive answer to the user's original question.\n\nContext:\n{context}\n\nOriginal Question: {query}\n\nAnswer:"
 
@@ -204,6 +262,7 @@ def generative_search(query, weaviate_client, openai_client, model="gpt-4", hyde
 def _collect_context(search_query, weaviate_client, openai_client, limit=20):
     """Retrieves relevant chunks from Weaviate for a given query."""
     try:
+        _usage_tracker.track_completion_call()
         hyde_prompt = (
             "Write a concise paragraph that answers the following question. "
             "Do not mention this is hypothetical. Question: " + search_query
@@ -266,6 +325,7 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         chunk_content = item.properties['chunk_content']
         map_prompt = map_prompt_template.format(chunk_content=chunk_content, entity_name=entity_name)
         try:
+            _usage_tracker.track_completion_call()
             response = openai_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "system", "content": "You are an expert data extractor."}, {"role": "user", "content": map_prompt}],
@@ -288,6 +348,7 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
     reduce_prompt = reduce_prompt_template.format(combined_text=combined_text, entity_name=entity_name)
 
     try:
+        _usage_tracker.track_completion_call()
         response_stream = openai_client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": "You are an expert report writer that responds in Markdown."}, {"role": "user", "content": reduce_prompt}],
@@ -326,6 +387,7 @@ def generate_timeline(weaviate_client, openai_client, model="gpt-4", mode="map-r
             "\n\n"
             f"Context:\n{context}\n\nTimeline:"
         )
+        _usage_tracker.track_completion_call()
         response = openai_client.chat.completions.create(
             model=model,
             messages=[
@@ -361,6 +423,7 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4", 
             "\n\n"
             f"Context:\n{context}\n\n{report_type}:"
         )
+        _usage_tracker.track_completion_call()
         response = openai_client.chat.completions.create(
             model=model,
             messages=[
@@ -396,6 +459,7 @@ def summarize_entity(entity, weaviate_client, openai_client, model="gpt-4", mode
             "\n\n"
             f"Context:\n{context}\n\nSummary:"
         )
+        _usage_tracker.track_completion_call()
         response = openai_client.chat.completions.create(
             model=model,
             messages=[

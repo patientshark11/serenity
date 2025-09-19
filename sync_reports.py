@@ -209,6 +209,10 @@ def generate_and_save_report(reports_table, name, generator_func):
 def main():
     print("--- Starting nightly job: Data Sync and Report Generation ---")
 
+    # --- Initialize Usage Tracking ---
+    usage_tracker = backend.get_usage_tracker()
+    usage_tracker.reset_counters()
+
     # --- 1. Initialize Clients ---
     weaviate_client = None
     try:
@@ -224,6 +228,15 @@ def main():
         print("Starting main data sync to Weaviate...")
         sync_status = backend.ingest_airtable_to_weaviate(weaviate_client, openai_client, chunk_size=2000)
         print(f"Data sync finished. Status: {sync_status}")
+    except RuntimeError as e:
+        if "API limit reached" in str(e):
+            print(f"FATAL: {e}", file=sys.stderr)
+            usage_tracker.log_summary()
+            if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
+                weaviate_client.close()
+            sys.exit(1)
+        else:
+            raise
     except Exception as e:
         print(f"ERROR: Weaviate data sync failed. Reports will be generated with existing data. Error: {e}", file=sys.stderr)
 
@@ -267,6 +280,14 @@ def main():
         try:
             if not generate_and_save_report(reports_table, name, generator_func):
                 failed_reports.append(name)
+        except RuntimeError as loop_err:
+            if "API limit reached" in str(loop_err):
+                print(f"FATAL: {loop_err}", file=sys.stderr)
+                print(f"Stopped at report: '{name}'", file=sys.stderr)
+                break
+            else:
+                print(f"ERROR: Unexpected runtime failure while processing '{name}': {loop_err}", file=sys.stderr)
+                failed_reports.append(name)
         except Exception as loop_err:
             print(
                 f"ERROR: Unexpected failure while processing '{name}': {loop_err}",
@@ -281,6 +302,7 @@ def main():
         )
 
     print("\n--- Nightly job finished ---")
+    usage_tracker.log_summary()
     backend.close_airtable_api(api)
     if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
         weaviate_client.close()
