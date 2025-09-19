@@ -246,8 +246,7 @@ def main():
             file=sys.stderr,
         )
         backend.close_airtable_api(api)
-        if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
-            weaviate_client.close()
+        backend.close_cached_weaviate_client()
         sys.exit(1)
 
     # --- 4. Reports Definition (easy to modify/expand) ---
@@ -282,8 +281,7 @@ def main():
 
     print("\n--- Nightly job finished ---")
     backend.close_airtable_api(api)
-    if weaviate_client and getattr(weaviate_client, "is_connected", lambda: False)():
-        weaviate_client.close()
+    backend.close_cached_weaviate_client()
 
 if __name__ == "__main__":
     main()

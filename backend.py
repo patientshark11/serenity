@@ -1,4 +1,6 @@
 import os
+import atexit
+import threading
 from collections.abc import Mapping
 import weaviate
 import openai
@@ -15,18 +17,87 @@ from weaviate.classes.init import Auth
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def connect_to_weaviate():
-    """Establishes a connection to the Weaviate instance."""
-    try:
-        client = weaviate.connect_to_wcs(
-            cluster_url=os.environ["WEAVIATE_URL"],
-            auth_credentials=Auth.api_key(os.environ["WEAVIATE_API_KEY"]),
-            headers={'X-OpenAI-Api-Key': os.environ["OPENAI_API_KEY"]}
-        )
+_WEAVIATE_CLIENT_LOCK = threading.RLock()
+_cached_weaviate_client = None
+_cached_weaviate_config = None
+
+
+def _close_weaviate_client(client):
+    """Close a Weaviate client instance, suppressing errors."""
+
+    if client is None:
+        return
+
+    close_method = getattr(client, "close", None)
+    if callable(close_method):
+        try:
+            close_method()
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            logging.warning("Failed to close Weaviate client cleanly: %s", exc)
+
+def connect_to_weaviate(force_refresh=False):
+    """Return a cached connection to the Weaviate instance.
+
+    Parameters
+    ----------
+    force_refresh : bool, optional
+        When ``True``, always create a fresh client, replacing any cached
+        instance.
+    """
+
+    global _cached_weaviate_client, _cached_weaviate_config
+
+    desired_config = (
+        os.environ["WEAVIATE_URL"],
+        os.environ["WEAVIATE_API_KEY"],
+        os.environ["OPENAI_API_KEY"],
+    )
+
+    with _WEAVIATE_CLIENT_LOCK:
+        if (
+            not force_refresh
+            and _cached_weaviate_client is not None
+            and _cached_weaviate_config == desired_config
+        ):
+            return _cached_weaviate_client
+
+        client_to_close = _cached_weaviate_client
+        _cached_weaviate_client = None
+        _cached_weaviate_config = None
+        if client_to_close is not None:
+            _close_weaviate_client(client_to_close)
+
+        try:
+            client = weaviate.connect_to_wcs(
+                cluster_url=desired_config[0],
+                auth_credentials=Auth.api_key(desired_config[1]),
+                headers={'X-OpenAI-Api-Key': desired_config[2]},
+            )
+        except Exception as e:
+            logging.error(f"Failed to connect to Weaviate: {e}")
+            raise
+
+        _cached_weaviate_client = client
+        _cached_weaviate_config = desired_config
         return client
-    except Exception as e:
-        logging.error(f"Failed to connect to Weaviate: {e}")
-        raise
+
+
+def close_cached_weaviate_client():
+    """Close and clear the cached Weaviate client, if one exists."""
+
+    global _cached_weaviate_client, _cached_weaviate_config
+
+    with _WEAVIATE_CLIENT_LOCK:
+        client = _cached_weaviate_client
+        if client is None:
+            return
+        _cached_weaviate_client = None
+        _cached_weaviate_config = None
+
+    _close_weaviate_client(client)
+
+
+atexit.register(close_cached_weaviate_client)
 
 def get_embedding(text, openai_client):
     """Generates an embedding for a given text using OpenAI."""
