@@ -86,6 +86,62 @@ def test_connect_to_weaviate_uses_modern_helper(monkeypatch):
     backend.close_cached_weaviate_client()
 
 
+def test_connect_to_weaviate_prefers_timeout_on_unknown_signature(monkeypatch):
+    backend.close_cached_weaviate_client()
+
+    dummy_client = object()
+    timeout_marker = object()
+    recorded_calls = []
+
+    def fake_connect_to_cloud(**kwargs):
+        recorded_calls.append(dict(kwargs))
+        if "timeout_config" in kwargs:
+            raise TypeError("unexpected keyword argument 'timeout_config'")
+        assert kwargs["timeout"] is timeout_marker
+        assert "grpc" not in kwargs
+        return dummy_client
+
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_weaviate_cloud",
+        fake_connect_to_cloud,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_wcs",
+        lambda *args, **kwargs: pytest.fail("Legacy helper should not be used"),
+        raising=False,
+    )
+
+    original_signature = backend.inspect.signature
+
+    def fake_signature(func):
+        if func is fake_connect_to_cloud:
+            raise ValueError("signature unavailable")
+        return original_signature(func)
+
+    monkeypatch.setattr(backend.inspect, "signature", fake_signature)
+
+    result = backend._connect_to_weaviate_cloud(
+        cluster_url="https://cloud",
+        auth_credentials=("api_key", "value"),
+        headers={"X-OpenAI-Api-Key": "key"},
+        timeout=timeout_marker,
+        grpc=True,
+    )
+
+    assert result is dummy_client
+    assert recorded_calls == [
+        {
+            "cluster_url": "https://cloud",
+            "auth_credentials": ("api_key", "value"),
+            "headers": {"X-OpenAI-Api-Key": "key"},
+            "timeout": timeout_marker,
+        }
+    ]
+
+
 def test_connect_to_weaviate_falls_back_to_legacy_helper(monkeypatch):
     backend.close_cached_weaviate_client()
 
