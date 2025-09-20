@@ -13,7 +13,7 @@ class DummyTable:
         # Simulate Airtable returning a created or updated record
         return [{"id": "rec1", "fields": records[0]["fields"]}]
 
-   def test_generate_and_save_report_skips_pdf_field(monkeypatch):
+def test_generate_and_save_report_skips_pdf_field(monkeypatch):
     table = DummyTable()
 
     captured = {}
