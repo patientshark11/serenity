@@ -142,6 +142,77 @@ def test_connect_to_weaviate_prefers_timeout_on_unknown_signature(monkeypatch):
     ]
 
 
+def test_connect_to_weaviate_recovers_from_timeout_config_type_error(monkeypatch):
+    backend.close_cached_weaviate_client()
+
+    dummy_client = object()
+    timeout_marker = object()
+    recorded_calls = []
+
+    def fake_connect_to_cloud(
+        *,
+        cluster_url,
+        auth_credentials=None,
+        headers=None,
+        timeout_config=None,
+        **kwargs,
+    ):
+        recorded_calls.append(
+            {
+                "cluster_url": cluster_url,
+                "auth_credentials": auth_credentials,
+                "headers": headers,
+                "timeout_config": timeout_config,
+                "extra_kwargs": dict(kwargs),
+            }
+        )
+        if timeout_config is not None:
+            assert "timeout" not in kwargs
+            raise TypeError("unexpected keyword argument 'timeout_config'")
+
+        assert kwargs.get("timeout") is timeout_marker
+        return dummy_client
+
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_weaviate_cloud",
+        fake_connect_to_cloud,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_wcs",
+        lambda *args, **kwargs: pytest.fail("Legacy helper should not be used"),
+        raising=False,
+    )
+
+    result = backend._connect_to_weaviate_cloud(
+        cluster_url="https://cloud",
+        auth_credentials=("api_key", "value"),
+        headers={"X-OpenAI-Api-Key": "key"},
+        timeout=timeout_marker,
+        grpc=True,
+    )
+
+    assert result is dummy_client
+    assert recorded_calls == [
+        {
+            "cluster_url": "https://cloud",
+            "auth_credentials": ("api_key", "value"),
+            "headers": {"X-OpenAI-Api-Key": "key"},
+            "timeout_config": timeout_marker,
+            "extra_kwargs": {},
+        },
+        {
+            "cluster_url": "https://cloud",
+            "auth_credentials": ("api_key", "value"),
+            "headers": {"X-OpenAI-Api-Key": "key"},
+            "timeout_config": None,
+            "extra_kwargs": {"timeout": timeout_marker},
+        },
+    ]
+
+
 def test_connect_to_weaviate_falls_back_to_legacy_helper(monkeypatch):
     backend.close_cached_weaviate_client()
 
