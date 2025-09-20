@@ -2,6 +2,7 @@ import os
 import atexit
 import threading
 from collections.abc import Mapping
+import inspect
 import weaviate
 import openai
 from pyairtable import Api
@@ -12,7 +13,7 @@ import json
 from fpdf import FPDF, XPos, YPos
 from io import BytesIO
 from weaviate.classes.config import Configure, Property, DataType
-from weaviate.classes.init import Auth
+from weaviate.classes.init import Auth, Timeout
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -68,11 +69,28 @@ def connect_to_weaviate(force_refresh=False):
             _close_weaviate_client(client_to_close)
 
         try:
-            client = weaviate.connect_to_wcs(
-                cluster_url=desired_config[0],
-                auth_credentials=Auth.api_key(desired_config[1]),
-                headers={'X-OpenAI-Api-Key': desired_config[2]},
-            )
+            connect_kwargs = {
+                "cluster_url": desired_config[0],
+                "auth_credentials": Auth.api_key(desired_config[1]),
+                "headers": {"X-OpenAI-Api-Key": desired_config[2]},
+            }
+
+            signature = inspect.signature(weaviate.connect_to_wcs)
+            parameters = signature.parameters
+
+            if "grpc" in parameters:
+                connect_kwargs["grpc"] = False
+
+            timeout = Timeout(init=10, query=60, insert=120)
+
+            if "timeout" in parameters:
+                connect_kwargs["timeout"] = timeout
+            elif "additional_config" in parameters:
+                from weaviate.config import AdditionalConfig
+
+                connect_kwargs["additional_config"] = AdditionalConfig(timeout=timeout)
+
+            client = weaviate.connect_to_wcs(**connect_kwargs)
         except Exception as e:
             logging.error(f"Failed to connect to Weaviate: {e}")
             raise
