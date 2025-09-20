@@ -1,7 +1,7 @@
 import pytest
 import backend
 import sync_reports
-from sync_reports import generate_and_save_report
+from sync_reports import generate_and_save_report, build_reports_to_generate
 
 
 class DummyTable:
@@ -121,6 +121,29 @@ def test_generate_and_save_report_supports_streaming_chunks():
     fields = table.upserts[0][0][0]["fields"]
     assert fields["Name"] == backend.sanitize_name("Streamed")
     assert fields["Content"] == "Hello world"
+
+
+def test_timeline_report_respects_limit_configuration(monkeypatch):
+    monkeypatch.setenv("TIMELINE_CHUNK_LIMIT", "7")
+    monkeypatch.setenv("TIMELINE_SEARCH_QUERY", "custom query")
+    monkeypatch.setenv("TIMELINE_SEARCH_TYPE", "BM25")
+    monkeypatch.setenv("TIMELINE_SEARCH_OPTIONS", "{\"alpha\": 0.5}")
+
+    captured = {}
+
+    def fake_generate_timeline(*args, **kwargs):
+        captured.update(kwargs)
+        return "timeline"
+
+    monkeypatch.setattr(sync_reports.backend, "generate_timeline", fake_generate_timeline)
+
+    reports = build_reports_to_generate("weaviate", "openai")
+    reports["Timeline"]()
+
+    assert captured["search_limit"] == 7
+    assert captured["search_query"] == "custom query"
+    assert captured["search_type"] == "bm25"
+    assert captured["search_options"] == {"alpha": 0.5}
 
 
 def test_get_key_people_returns_airtable_results(monkeypatch):

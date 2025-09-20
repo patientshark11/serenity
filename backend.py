@@ -351,10 +351,32 @@ def _map_reduce_query(
     model="gpt-4",
     entity_name=None,
     map_model=None,
+    fallback_search=None,
 ):
     """
     A generic map-reduce framework for querying Weaviate, processing chunks, and summarizing.
-    If an entity_name is provided, it performs a targeted search. Otherwise, it iterates through all docs.
+
+    Parameters
+    ----------
+    weaviate_client : weaviate.Client
+        Connected Weaviate client.
+    openai_client : openai.OpenAI
+        Client used for LLM interactions.
+    map_prompt_template : str
+        Prompt template applied to each chunk during the MAP step.
+    reduce_prompt_template : str
+        Prompt template used during the REDUCE step.
+    model : str, optional
+        Model used for the REDUCE step, by default ``"gpt-4"``.
+    entity_name : str, optional
+        When provided, a targeted vector search is performed for this entity.
+    map_model : str, optional
+        Model used for the MAP step, defaults to ``OPENAI_MAP_MODEL`` env var.
+    fallback_search : Mapping, optional
+        Configuration applied when ``entity_name`` is not provided. Supports the
+        keys ``query`` (text to embed), ``vector`` (pre-computed embedding),
+        ``type`` ("near_vector" or "bm25"), ``limit`` (max chunks), and
+        ``options`` (extra query kwargs).
     """
     collection_name = "CustodyDocs"
     if not weaviate_client.collections.exists(collection_name):
@@ -370,12 +392,83 @@ def _map_reduce_query(
         query_vector = get_embedding(entity_name, openai_client)
         response = collection.query.near_vector(
             near_vector=query_vector,
-            limit=50
+            limit=50,
+            return_properties=["chunk_content"],
         )
         items_to_process = response.objects
     else:
-        logging.info("Starting full collection iteration...")
-        items_to_process = collection.iterator()
+        logging.info("No entity supplied; performing fallback search for relevant chunks.")
+
+        if not isinstance(fallback_search, Mapping):
+            fallback_search = {}
+
+        try:
+            default_limit = int(os.getenv("MAP_REDUCE_FALLBACK_LIMIT", "50"))
+        except ValueError:
+            logging.warning("Invalid MAP_REDUCE_FALLBACK_LIMIT value; defaulting to 50.")
+            default_limit = 50
+
+        fallback_limit = fallback_search.get("limit")
+        try:
+            fallback_limit = int(fallback_limit)
+        except (TypeError, ValueError):
+            fallback_limit = default_limit
+
+        if fallback_limit <= 0:
+            logging.warning("Fallback limit %s is not positive; using default %s.", fallback_limit, default_limit)
+            fallback_limit = default_limit
+
+        search_type = fallback_search.get("type") or os.getenv("MAP_REDUCE_FALLBACK_TYPE", "near_vector")
+        search_type = (search_type or "near_vector").lower()
+
+        search_options = fallback_search.get("options")
+        if not isinstance(search_options, Mapping):
+            search_options = {}
+        search_options = dict(search_options)
+
+        return_properties = search_options.pop("return_properties", ["chunk_content"])
+
+        response = None
+        if search_type == "bm25":
+            query_text = fallback_search.get("query") or os.getenv("MAP_REDUCE_FALLBACK_QUERY", "chronological timeline of key events")
+            logging.info(
+                "Running BM25 fallback search (limit=%s) with query: %s", fallback_limit, query_text
+            )
+            try:
+                response = collection.query.bm25(
+                    query=query_text,
+                    limit=fallback_limit,
+                    return_properties=return_properties,
+                    **search_options,
+                )
+            except Exception as exc:
+                logging.error("BM25 fallback search failed: %s", exc)
+                response = None
+        else:
+            vector = fallback_search.get("vector")
+            query_text = fallback_search.get("query") or os.getenv("MAP_REDUCE_FALLBACK_QUERY", "chronological timeline of key events")
+            if vector is None:
+                try:
+                    vector = get_embedding(query_text, openai_client)
+                except Exception as exc:
+                    logging.error("Failed to embed fallback query '%s': %s", query_text, exc)
+                    vector = None
+            logging.info(
+                "Running near_vector fallback search (limit=%s) with query: %s", fallback_limit, query_text
+            )
+            if vector is not None:
+                try:
+                    response = collection.query.near_vector(
+                        near_vector=vector,
+                        limit=fallback_limit,
+                        return_properties=return_properties,
+                        **search_options,
+                    )
+                except Exception as exc:
+                    logging.error("near_vector fallback search failed: %s", exc)
+                    response = None
+
+        items_to_process = list(getattr(response, "objects", []) or [])
 
     mapped_results = []
     logging.info("Starting MAP step...")
@@ -422,12 +515,97 @@ def generate_timeline(
     model="gpt-4",
     mode="map-reduce",
     map_model=None,
+    search_limit=None,
+    search_query=None,
+    search_type=None,
+    search_options=None,
 ):
-    """Generates a chronological timeline of events from stored documents."""
+    """Generates a chronological timeline of events from stored documents.
+
+    Parameters
+    ----------
+    weaviate_client : weaviate.Client
+        Connected client used to retrieve candidate chunks.
+    openai_client : openai.OpenAI
+        Client used for LLM calls.
+    model : str, optional
+        Model for the REDUCE step, by default ``"gpt-4"``.
+    mode : str, optional
+        Either ``"map-reduce"`` (default) or ``"simple"``.
+    map_model : str, optional
+        Model for the MAP step.
+    search_limit : int, optional
+        Maximum number of chunks to consider when no entity is supplied.
+    search_query : str, optional
+        Search text used to retrieve relevant chunks.
+    search_type : str, optional
+        Retrieval strategy ("near_vector" or "bm25").
+    search_options : Mapping, optional
+        Additional query parameters forwarded to Weaviate.
+    """
+
+    try:
+        default_limit = int(os.getenv("TIMELINE_CHUNK_LIMIT", "50"))
+    except ValueError:
+        logging.warning("Invalid TIMELINE_CHUNK_LIMIT value; defaulting to 50.")
+        default_limit = 50
+
+    if search_limit is None:
+        search_limit = default_limit
+
+    try:
+        search_limit = int(search_limit)
+    except (TypeError, ValueError):
+        logging.warning("Timeline search_limit %r is invalid; using default %s.", search_limit, default_limit)
+        search_limit = default_limit
+
+    if search_limit <= 0:
+        logging.warning("Timeline search_limit %s is not positive; using default %s.", search_limit, default_limit)
+        search_limit = default_limit
+
+    if search_query is None:
+        env_query = os.getenv("TIMELINE_SEARCH_QUERY")
+        search_query = env_query if env_query else None
+
+    if search_query:
+        search_query = search_query.strip()
+    if not search_query:
+        search_query = "chronological timeline of key events"
+
+    if search_type is None:
+        env_type = os.getenv("TIMELINE_SEARCH_TYPE")
+        search_type = env_type if env_type else None
+    if search_type:
+        search_type = search_type.strip().lower() or None
+
+    if search_options is None:
+        raw_options = os.getenv("TIMELINE_SEARCH_OPTIONS")
+        if raw_options:
+            try:
+                parsed = json.loads(raw_options)
+            except json.JSONDecodeError:
+                logging.warning(
+                    "TIMELINE_SEARCH_OPTIONS is not valid JSON. Ignoring provided value."
+                )
+                parsed = {}
+            if isinstance(parsed, Mapping):
+                search_options = parsed
+            else:
+                logging.warning("TIMELINE_SEARCH_OPTIONS must decode to a mapping. Ignoring value.")
+                search_options = {}
+        else:
+            search_options = {}
+    elif not isinstance(search_options, Mapping):
+        logging.warning("search_options must be a mapping. Ignoring provided value.")
+        search_options = {}
+    else:
+        search_options = dict(search_options)
+
     if mode == "map-reduce":
         # Use map-reduce logic for best accuracy
         map_prompt_template = """
-        You are a data extractor. Your task is to find and list any events with specific dates or clear time references (e.g., "last week," "January 2023") from the following text. For each event, provide the date and a brief description.
+        You are a data extractor. Your task is to find and list any events with specific dates or clear time references (e.g., "
+last week," "January 2023") from the following text. For each event, provide the date and a brief description.
         Text:
         "{chunk_content}"
         """
@@ -445,10 +623,21 @@ def generate_timeline(
             reduce_prompt_template,
             model=model,
             map_model=map_model,
+            fallback_search={
+                "query": search_query,
+                "limit": search_limit,
+                "type": search_type,
+                "options": search_options,
+            },
         )
     else:
         # Use simple context aggregation (fast, less accurate)
-        context = _collect_context("Create a chronological timeline of key events.", weaviate_client, openai_client, limit=40)
+        context = _collect_context(
+            "Create a chronological timeline of key events.",
+            weaviate_client,
+            openai_client,
+            limit=search_limit,
+        )
         if not context:
             return "Error: No data available to generate a timeline."
         prompt = (

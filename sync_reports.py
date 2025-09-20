@@ -12,6 +12,7 @@ It performs two main tasks:
 """
 import os
 import sys
+import json
 import logging
 import backend
 import openai
@@ -24,6 +25,117 @@ from datetime import datetime
 REPORT_MODE = os.environ.get("REPORT_MODE", "map-reduce")  # "map-reduce" or "simple"
 MAP_MODEL = os.environ.get("OPENAI_MAP_MODEL", "gpt-4o-mini-2024-07-18")
 GENERATE_PDF = True  # Set to False to skip PDF generation
+
+def _safe_int_env(var_name, default):
+    """Return an integer from the environment or a fallback default."""
+
+    value = os.environ.get(var_name)
+    if value in (None, ""):
+        return default
+
+    try:
+        return int(value)
+    except ValueError:
+        logging.warning(
+            "Environment variable %s must be an integer. Using default %s.",
+            var_name,
+            default,
+        )
+        return default
+
+
+def _load_json_mapping_env(var_name):
+    """Parse a JSON mapping from the environment, returning an empty dict on error."""
+
+    raw_value = os.environ.get(var_name)
+    if not raw_value:
+        return {}
+
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        logging.warning(
+            "Environment variable %s must contain valid JSON. Ignoring value.",
+            var_name,
+        )
+        return {}
+
+    if isinstance(parsed, Mapping):
+        return dict(parsed)
+
+    logging.warning(
+        "Environment variable %s must decode to a mapping. Ignoring value.",
+        var_name,
+    )
+    return {}
+
+
+def _parse_timeline_search_config():
+    """Return configuration for the timeline report fallback search."""
+
+    limit = _safe_int_env("TIMELINE_CHUNK_LIMIT", 50)
+    query = os.environ.get("TIMELINE_SEARCH_QUERY")
+    if query:
+        query = query.strip() or None
+
+    search_type = os.environ.get("TIMELINE_SEARCH_TYPE")
+    if search_type:
+        search_type = search_type.strip().lower() or None
+
+    options = _load_json_mapping_env("TIMELINE_SEARCH_OPTIONS")
+
+    return {
+        "limit": limit,
+        "query": query,
+        "type": search_type,
+        "options": options,
+    }
+
+
+def build_reports_to_generate(weaviate_client, openai_client):
+    """Return the report generators configured for the nightly job."""
+
+    timeline_config = _parse_timeline_search_config()
+
+    reports = {
+        "Timeline": lambda cfg=timeline_config: backend.generate_timeline(
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+            search_limit=cfg["limit"],
+            search_query=cfg["query"],
+            search_type=cfg["type"],
+            search_options=cfg["options"],
+        ),
+        "Conflict Report": lambda: backend.generate_report(
+            "Conflict Report",
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        ),
+        "Legal Communication Summary": lambda: backend.generate_report(
+            "Legal Communication Summary",
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        ),
+    }
+
+    key_people = get_key_people()
+    for person in key_people:
+        reports[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(
+            p,
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        )
+
+    return reports
+
 
 def get_key_people():
     """Try to fetch key people from Airtable, otherwise fallback to static list."""
@@ -243,38 +355,7 @@ def main():
         sys.exit(1)
 
     # --- 4. Reports Definition (easy to modify/expand) ---
-    reports_to_generate = {
-        "Timeline": lambda: backend.generate_timeline(
-            weaviate_client,
-            openai_client,
-            mode=REPORT_MODE,
-            map_model=MAP_MODEL,
-        ),
-        "Conflict Report": lambda: backend.generate_report(
-            "Conflict Report",
-            weaviate_client,
-            openai_client,
-            mode=REPORT_MODE,
-            map_model=MAP_MODEL,
-        ),
-        "Legal Communication Summary": lambda: backend.generate_report(
-            "Legal Communication Summary",
-            weaviate_client,
-            openai_client,
-            mode=REPORT_MODE,
-            map_model=MAP_MODEL,
-        ),
-    }
-
-    key_people = get_key_people()
-    for person in key_people:
-        reports_to_generate[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(
-            p,
-            weaviate_client,
-            openai_client,
-            mode=REPORT_MODE,
-            map_model=MAP_MODEL,
-        )
+    reports_to_generate = build_reports_to_generate(weaviate_client, openai_client)
 
     # --- 5. Generate & Save Reports ---
     failed_reports = []

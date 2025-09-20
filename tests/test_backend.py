@@ -211,18 +211,35 @@ def test_fetch_reports_uses_single_api_and_no_resource_warning(monkeypatch):
     assert len(w) == 0
 
 
-def test_map_reduce_query_uses_distinct_models():
+def test_map_reduce_query_uses_distinct_models(monkeypatch):
     class DummyItem:
         def __init__(self, chunk):
             self.properties = {"chunk_content": chunk}
 
+    class DummyQuery:
+        def __init__(self):
+            self.calls = []
+
+        def near_vector(self, **kwargs):
+            self.calls.append(kwargs)
+
+            class Response:
+                objects = [DummyItem("chunk one"), DummyItem("chunk two")]
+
+            return Response()
+
     class DummyCollection:
+        def __init__(self):
+            self.query = DummyQuery()
+            self.iterator_called = False
+
         def iterator(self):
-            return [DummyItem("chunk one"), DummyItem("chunk two")]
+            self.iterator_called = True
+            return []
 
     class DummyCollections:
-        def __init__(self):
-            self._collection = DummyCollection()
+        def __init__(self, collection):
+            self._collection = collection
 
         def exists(self, name):
             return True
@@ -231,8 +248,8 @@ def test_map_reduce_query_uses_distinct_models():
             return self._collection
 
     class DummyWeaviateClient:
-        def __init__(self):
-            self.collections = DummyCollections()
+        def __init__(self, collection):
+            self.collections = DummyCollections(collection)
 
     class RecordingCompletions:
         def __init__(self):
@@ -265,9 +282,18 @@ def test_map_reduce_query_uses_distinct_models():
         def __init__(self, completions):
             self.chat = DummyChat(completions)
 
+    captured_embedding = {}
+
+    def fake_embedding(text, client):
+        captured_embedding["text"] = text
+        return [0.1, 0.2]
+
+    monkeypatch.setattr(backend, "get_embedding", fake_embedding)
+
     completions = RecordingCompletions()
     openai_client = DummyOpenAIClient(completions)
-    weaviate_client = DummyWeaviateClient()
+    collection = DummyCollection()
+    weaviate_client = DummyWeaviateClient(collection)
 
     result = backend._map_reduce_query(
         weaviate_client,
@@ -276,6 +302,7 @@ def test_map_reduce_query_uses_distinct_models():
         reduce_prompt_template="{combined_text}",
         model="reduce-model",
         map_model="map-model",
+        fallback_search={"query": "timeline", "limit": 2},
     )
 
     # Reduce step should stream content when a report is generated
@@ -288,3 +315,10 @@ def test_map_reduce_query_uses_distinct_models():
     assert {call["model"] for call in map_calls} == {"map-model"}
     assert len(reduce_calls) == 1
     assert reduce_calls[0]["model"] == "reduce-model"
+
+    assert not collection.iterator_called, "Iterator should not be used for fallback search"
+    assert collection.query.calls, "Expected fallback search to issue a query"
+    call = collection.query.calls[0]
+    assert call["limit"] == 2
+    assert call["return_properties"] == ["chunk_content"]
+    assert captured_embedding["text"] == "timeline"
