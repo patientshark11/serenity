@@ -13,9 +13,17 @@ class DummyTable:
         # Simulate Airtable returning a created or updated record
         return [{"id": "rec1", "fields": records[0]["fields"]}]
 
-
-def test_generate_and_save_report_skips_pdf_field(monkeypatch):
+   def test_generate_and_save_report_skips_pdf_field(monkeypatch):
     table = DummyTable()
+
+    captured = {}
+
+    def fake_create_pdf(content, summary):
+        captured["content"] = content
+        captured["summary"] = summary
+        return b"pdf-bytes"
+
+    monkeypatch.setattr(backend, "create_pdf", fake_create_pdf)
 
     def generator_func():
         return "Report body"
@@ -27,10 +35,13 @@ def test_generate_and_save_report_skips_pdf_field(monkeypatch):
     fields = table.upserts[0][0][0]["fields"]
 
     assert fields["Name"] == backend.sanitize_name("Sample Person")
-    assert "PDF" not in fields
     assert set(fields.keys()) == {"Name", "Content", "LastGenerated"}
-
-
+    assert "PDF" not in fields
+    assert captured == {
+        "content": "Report body",
+        "summary": "Sample Person",
+    }
+    
 def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
     table = DummyTable()
 
@@ -47,10 +58,12 @@ def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
     assert fields["ReportLabel"] == backend.sanitize_name("Custom Person")
     assert "Name" not in fields
     assert key_fields == ["ReportLabel"]
+    assert set(fields.keys()) == {"ReportLabel", "Content", "LastGenerated"}
     assert "PDF" not in fields
 
 
-def test_generate_and_save_report_request_fields_are_supported():
+def test_generate_and_save_report_payload_contains_only_supported_fields():
+  
     table = DummyTable()
 
     def generator_func():
@@ -60,9 +73,9 @@ def test_generate_and_save_report_request_fields_are_supported():
 
     records, key_fields = table.upserts[0]
     fields = records[0]["fields"]
-    assert "PDF" not in fields
+    
     assert set(fields.keys()) == {"Name", "Content", "LastGenerated"}
-
+    assert "PDF" not in fields
 
 class FailingTable:
     def batch_upsert(self, records, key_fields=None):
