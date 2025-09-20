@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import sys
 import backend
 import openai
 import uuid # Import uuid for unique keys
@@ -145,7 +146,7 @@ with st.sidebar:
             with st.spinner("Syncing data and generating new reports... (this may take several minutes)"):
                 try:
                     # IMPORTANT: This should call the NEW sync script
-                    result = subprocess.run(["python", "sync_reports.py"], capture_output=True, text=True)
+                    result = subprocess.run([sys.executable, "-u", "sync_reports.py"], capture_output=True, text=True)
                     if result.returncode == 0:
                         st.toast(result.stdout or "Data sync and report generation complete!", icon="✅")
                     else:
