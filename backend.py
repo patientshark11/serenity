@@ -22,6 +22,24 @@ _cached_weaviate_client = None
 _cached_weaviate_config = None
 
 DEFAULT_MAP_MODEL = "gpt-4o-mini-2024-07-18"
+DEFAULT_REDUCE_MODEL = "gpt-4o-2024-08-06"
+
+
+def _resolve_reduce_model(model=None):
+    """Return the model name to use for REDUCE steps."""
+
+    if model:
+        return model
+
+    env_model = os.getenv("OPENAI_REDUCE_MODEL")
+    if env_model:
+        return env_model
+
+    if DEFAULT_REDUCE_MODEL:
+        return DEFAULT_REDUCE_MODEL
+
+    completion_model = os.getenv("OPENAI_COMPLETION_MODEL")
+    return completion_model or "gpt-4o"
 
 
 def _connect_to_weaviate_cloud(**kwargs):
@@ -362,7 +380,7 @@ def _map_reduce_query(
     openai_client,
     map_prompt_template,
     reduce_prompt_template,
-    model="gpt-4",
+    model=None,
     entity_name=None,
     map_model=None,
     fallback_search=None,
@@ -381,7 +399,8 @@ def _map_reduce_query(
     reduce_prompt_template : str
         Prompt template used during the REDUCE step.
     model : str, optional
-        Model used for the REDUCE step, by default ``"gpt-4"``.
+        Model used for the REDUCE step. When omitted, ``_resolve_reduce_model``
+        determines the value using environment defaults.
     entity_name : str, optional
         When provided, a targeted vector search is performed for this entity.
     map_model : str, optional
@@ -402,6 +421,7 @@ def _map_reduce_query(
     collection = weaviate_client.collections.get(collection_name)
 
     map_model = _resolve_map_model(map_model)
+    model = _resolve_reduce_model(model)
 
     items_to_process = []
     if entity_name:
@@ -546,7 +566,7 @@ def _map_reduce_query(
 def generate_timeline(
     weaviate_client,
     openai_client,
-    model="gpt-4",
+    model=None,
     mode="map-reduce",
     map_model=None,
     search_limit=None,
@@ -563,7 +583,8 @@ def generate_timeline(
     openai_client : openai.OpenAI
         Client used for LLM calls.
     model : str, optional
-        Model for the REDUCE step, by default ``"gpt-4"``.
+        Model for the REDUCE step. When omitted, ``_resolve_reduce_model``
+        determines the value using environment defaults.
     mode : str, optional
         Either ``"map-reduce"`` (default) or ``"simple"``.
     map_model : str, optional
@@ -635,6 +656,8 @@ def generate_timeline(
     else:
         search_options = dict(search_options)
 
+    resolved_model = _resolve_reduce_model(model)
+
     if mode == "map-reduce":
         # Use map-reduce logic for best accuracy
         map_prompt_template = """
@@ -655,7 +678,7 @@ last week," "January 2023") from the following text. For each event, provide the
             openai_client,
             map_prompt_template,
             reduce_prompt_template,
-            model=model,
+            model=resolved_model,
             map_model=map_model,
             fallback_search={
                 "query": search_query,
@@ -680,7 +703,7 @@ last week," "January 2023") from the following text. For each event, provide the
             f"Context:\n{context}\n\nTimeline:"
         )
         response = openai_client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that writes timelines based on provided documentation."},
                 {"role": "user", "content": prompt},
@@ -692,11 +715,13 @@ def generate_report(
     report_type,
     weaviate_client,
     openai_client,
-    model="gpt-4",
+    model=None,
     mode="map-reduce",
     map_model=None,
 ):
     """Generates a specific report type using stored documents."""
+    resolved_model = _resolve_reduce_model(model)
+
     if mode == "map-reduce":
         map_prompt_template = """
         You are a data extractor. Your task is to read the following text and extract any information relevant to the topic of '{entity_name}'. This could include events, statements, conflicts, communications, etc.
@@ -715,7 +740,7 @@ def generate_report(
             openai_client,
             map_prompt_template,
             reduce_prompt_template,
-            model=model,
+            model=resolved_model,
             entity_name=report_type,
             map_model=map_model,
         )
@@ -730,7 +755,7 @@ def generate_report(
             f"Context:\n{context}\n\n{report_type}:"
         )
         response = openai_client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that generates analytical reports based on provided context."},
                 {"role": "user", "content": prompt},
@@ -742,11 +767,13 @@ def summarize_entity(
     entity,
     weaviate_client,
     openai_client,
-    model="gpt-4",
+    model=None,
     mode="map-reduce",
     map_model=None,
 ):
     """Summarizes information about a specific entity from the documents."""
+    resolved_model = _resolve_reduce_model(model)
+
     if mode == "map-reduce":
         map_prompt_template = """
         You are a data extractor. Your task is to read the following text and extract any information, events, or descriptions related to the entity: '{entity_name}'. If the text is not relevant to the entity, ignore it.
@@ -765,7 +792,7 @@ def summarize_entity(
             openai_client,
             map_prompt_template,
             reduce_prompt_template,
-            model=model,
+            model=resolved_model,
             entity_name=entity,
             map_model=map_model,
         )
@@ -780,7 +807,7 @@ def summarize_entity(
             f"Context:\n{context}\n\nSummary:"
         )
         response = openai_client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that summarizes entities based on provided documentation."},
                 {"role": "user", "content": prompt},

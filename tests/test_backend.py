@@ -135,6 +135,62 @@ def test_connect_to_weaviate_falls_back_to_legacy_helper(monkeypatch):
     backend.close_cached_weaviate_client()
 
 
+def test_generators_forward_resolved_reduce_model_by_default(monkeypatch):
+    resolved_calls = []
+
+    def fake_resolve(model=None):
+        resolved_calls.append(model)
+        return "resolved-default"
+
+    forwarded_models = []
+
+    def fake_map_reduce(*args, **kwargs):
+        forwarded_models.append(kwargs["model"])
+        return kwargs.get("entity_name", "timeline")
+
+    monkeypatch.setattr(backend, "_resolve_reduce_model", fake_resolve)
+    monkeypatch.setattr(backend, "_map_reduce_query", fake_map_reduce)
+
+    timeline_result = backend.generate_timeline(object(), object())
+    report_result = backend.generate_report("Any", object(), object())
+    summary_result = backend.summarize_entity("Entity", object(), object())
+
+    assert timeline_result == "timeline"
+    assert report_result == "Any"
+    assert summary_result == "Entity"
+
+    assert resolved_calls == [None, None, None]
+    assert forwarded_models == ["resolved-default", "resolved-default", "resolved-default"]
+
+
+def test_generators_forward_resolved_reduce_model_override(monkeypatch):
+    resolved_calls = []
+
+    def fake_resolve(model=None):
+        resolved_calls.append(model)
+        return f"resolved-{model}"
+
+    forwarded_models = []
+
+    def fake_map_reduce(*args, **kwargs):
+        forwarded_models.append(kwargs["model"])
+        return kwargs.get("entity_name", "timeline")
+
+    monkeypatch.setattr(backend, "_resolve_reduce_model", fake_resolve)
+    monkeypatch.setattr(backend, "_map_reduce_query", fake_map_reduce)
+
+    timeline_result = backend.generate_timeline(object(), object(), model="custom")
+    report_result = backend.generate_report("Any", object(), object(), model="custom")
+    summary_result = backend.summarize_entity("Entity", object(), object(), model="custom")
+
+    assert timeline_result == "timeline"
+    assert report_result == "Any"
+    assert summary_result == "Entity"
+
+    assert resolved_calls == ["custom", "custom", "custom"]
+    assert forwarded_models == ["resolved-custom", "resolved-custom", "resolved-custom"]
+
+
 def test_fetch_report_returns_content(mock_airtable):
     content = backend.fetch_report("Any")
     assert content == "Mocked content"
