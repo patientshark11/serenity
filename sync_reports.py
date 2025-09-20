@@ -9,6 +9,11 @@ It performs two main tasks:
     reports table in Airtable (default name: 'GeneratedReports') for instant
     retrieval by the app. The table name can be overridden via the
     ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable.
+
+The OpenAI models used for the MAP and REDUCE steps default to
+``backend.DEFAULT_MAP_MODEL`` and ``backend.DEFAULT_REDUCE_MODEL`` but can be
+overridden via the ``OPENAI_MAP_MODEL`` and ``OPENAI_REDUCE_MODEL``
+environment variables.
 """
 import os
 import sys
@@ -24,6 +29,7 @@ from datetime import datetime
 # --- CONFIGURATION ---
 REPORT_MODE = os.environ.get("REPORT_MODE", "map-reduce")  # "map-reduce" or "simple"
 MAP_MODEL = os.environ.get("OPENAI_MAP_MODEL", backend.DEFAULT_MAP_MODEL)
+REDUCE_MODEL = os.environ.get("OPENAI_REDUCE_MODEL", backend.DEFAULT_REDUCE_MODEL)
 GENERATE_PDF = True  # Set to False to skip PDF generation
 
 def _safe_int_env(var_name, default):
@@ -101,6 +107,7 @@ def build_reports_to_generate(weaviate_client, openai_client):
         "Timeline": lambda cfg=timeline_config: backend.generate_timeline(
             weaviate_client,
             openai_client,
+            model=REDUCE_MODEL,
             mode=REPORT_MODE,
             map_model=MAP_MODEL,
             search_limit=cfg["limit"],
@@ -112,6 +119,7 @@ def build_reports_to_generate(weaviate_client, openai_client):
             "Conflict Report",
             weaviate_client,
             openai_client,
+            model=REDUCE_MODEL,
             mode=REPORT_MODE,
             map_model=MAP_MODEL,
         ),
@@ -119,6 +127,7 @@ def build_reports_to_generate(weaviate_client, openai_client):
             "Legal Communication Summary",
             weaviate_client,
             openai_client,
+            model=REDUCE_MODEL,
             mode=REPORT_MODE,
             map_model=MAP_MODEL,
         ),
@@ -130,6 +139,7 @@ def build_reports_to_generate(weaviate_client, openai_client):
             p,
             weaviate_client,
             openai_client,
+            model=REDUCE_MODEL,
             mode=REPORT_MODE,
             map_model=MAP_MODEL,
         )
