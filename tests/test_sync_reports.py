@@ -13,8 +13,7 @@ class DummyTable:
         # Simulate Airtable returning a created or updated record
         return [{"id": "rec1", "fields": records[0]["fields"]}]
 
-
-def test_generate_and_save_report_generates_pdf_without_uploading(monkeypatch):
+   def test_generate_and_save_report_skips_pdf_field(monkeypatch):
     table = DummyTable()
 
     captured = {}
@@ -42,8 +41,7 @@ def test_generate_and_save_report_generates_pdf_without_uploading(monkeypatch):
         "content": "Report body",
         "summary": "Sample Person",
     }
-
-
+    
 def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
     table = DummyTable()
 
@@ -65,6 +63,7 @@ def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
 
 
 def test_generate_and_save_report_payload_contains_only_supported_fields():
+  
     table = DummyTable()
 
     def generator_func():
@@ -74,9 +73,9 @@ def test_generate_and_save_report_payload_contains_only_supported_fields():
 
     records, key_fields = table.upserts[0]
     fields = records[0]["fields"]
+    
     assert set(fields.keys()) == {"Name", "Content", "LastGenerated"}
     assert "PDF" not in fields
-
 
 class FailingTable:
     def batch_upsert(self, records, key_fields=None):

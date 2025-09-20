@@ -149,7 +149,9 @@ def generate_and_save_report(reports_table, name, generator_func):
         if GENERATE_PDF:
             try:
                 pdf_bytes = backend.create_pdf(report_content, summary=name)
-                print(f"PDF generated for '{name}' ({len(pdf_bytes)} bytes).")
+                print(
+                    f"PDF generated for '{name}' ({len(pdf_bytes)} bytes). Attachment upload is currently disabled."
+                )
             except Exception as pdf_err:
                 logging.error("Failed to generate PDF for '%s': %s", name, pdf_err)
 
