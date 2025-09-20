@@ -6,7 +6,7 @@ It performs two main tasks:
 1.  Syncs the main data table from Airtable to the Weaviate vector database.
 2.  Generates all standard analysis reports (Timeline, Conflict Report, etc.) and
     a summary for each key person, then saves the output to a separate
-    reports table in Airtable (default name: 'GeneratedReports') for instant
+    reports table in Airtable (default name: 'GenerateReports') for instant
     retrieval by the app. The table name can be overridden via the
     ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable.
 """
@@ -224,7 +224,7 @@ def main():
     api = None
     try:
         reports_table_name = os.environ.get(
-            "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
+            "AIRTABLE_REPORTS_TABLE_NAME", "GenerateReports"
         )
         api = Api(os.environ["AIRTABLE_API_KEY"])
         reports_table = api.table(

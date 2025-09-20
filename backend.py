@@ -325,6 +325,27 @@ def _collect_context(search_query, weaviate_client, openai_client, limit=20):
         logging.error(f"Failed to retrieve context from Weaviate: {e}")
         return ""
 
+def _format_prompt(template, **kwargs):
+    """Format *template* while preserving literal braces in provided values."""
+
+    placeholders = {}
+    safe_kwargs = {}
+
+    for key, value in kwargs.items():
+        if isinstance(value, str):
+            placeholder = f"__SAFE_{uuid.uuid4().hex}__"
+            placeholders[placeholder] = value
+            safe_kwargs[key] = placeholder
+        else:
+            safe_kwargs[key] = value
+
+    formatted = template.format(**safe_kwargs)
+    for placeholder, original in placeholders.items():
+        formatted = formatted.replace(placeholder, original)
+
+    return formatted
+
+
 def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model="gpt-4", entity_name=None):
     """
     A generic map-reduce framework for querying Weaviate, processing chunks, and summarizing.
@@ -353,7 +374,11 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
     logging.info("Starting MAP step...")
     for item in items_to_process:
         chunk_content = item.properties['chunk_content']
-        map_prompt = map_prompt_template.format(chunk_content=chunk_content, entity_name=entity_name)
+        map_prompt = _format_prompt(
+            map_prompt_template,
+            chunk_content=chunk_content,
+            entity_name=entity_name,
+        )
         try:
             response = openai_client.chat.completions.create(
                 model=model,
@@ -374,7 +399,11 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
 
     logging.info("Starting REDUCE step...")
     combined_text = "\n---\n".join(mapped_results)
-    reduce_prompt = reduce_prompt_template.format(combined_text=combined_text, entity_name=entity_name)
+    reduce_prompt = _format_prompt(
+        reduce_prompt_template,
+        combined_text=combined_text,
+        entity_name=entity_name,
+    )
 
     try:
         response_stream = openai_client.chat.completions.create(
@@ -557,7 +586,7 @@ def create_pdf(text_content, summary=None, sources=None):
 def fetch_report(report_name, api=None):
     """Fetches a pre-generated report from the Airtable reports table.
 
-    The table name defaults to ``"GeneratedReports"`` but can be overridden
+    The table name defaults to ``"GenerateReports"`` but can be overridden
     via the ``AIRTABLE_REPORTS_TABLE_NAME`` environment variable. The field
     containing the report name defaults to ``"Name"`` and can be overridden
     via ``AIRTABLE_REPORT_NAME_FIELD``.
@@ -576,7 +605,7 @@ def fetch_report(report_name, api=None):
         api = Api(os.environ["AIRTABLE_API_KEY"])
     try:
         reports_table_name = os.environ.get(
-            "AIRTABLE_REPORTS_TABLE_NAME", "GeneratedReports"
+            "AIRTABLE_REPORTS_TABLE_NAME", "GenerateReports"
         )
         report_name_field = os.getenv("AIRTABLE_REPORT_NAME_FIELD", "Name")
         reports_table = api.table(
