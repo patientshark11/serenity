@@ -1,5 +1,8 @@
+import types
 import warnings
+
 import pytest
+
 import backend
 
 
@@ -25,6 +28,111 @@ def test_create_pdf_emits_no_deprecation_warnings():
 
     assert isinstance(result, bytes)
     assert not any(w.category is DeprecationWarning for w in caught)
+
+
+def test_connect_to_weaviate_uses_modern_helper(monkeypatch):
+    backend.close_cached_weaviate_client()
+
+    monkeypatch.setenv("WEAVIATE_URL", "https://cloud")
+    monkeypatch.setenv("WEAVIATE_API_KEY", "api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+
+    class DummyAuth:
+        @staticmethod
+        def api_key(value):
+            return ("api_key", value)
+
+    class DummyTimeout:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(backend, "Auth", DummyAuth)
+    monkeypatch.setattr(backend, "Timeout", DummyTimeout)
+
+    captured_kwargs = {}
+    dummy_client = object()
+
+    def fake_connect_to_cloud(**kwargs):
+        captured_kwargs.update(kwargs)
+        return dummy_client
+
+    monkeypatch.setattr(
+        backend.weaviate, "connect_to_weaviate_cloud", fake_connect_to_cloud, raising=False
+    )
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_wcs",
+        lambda *args, **kwargs: pytest.fail("Legacy helper should not be used"),
+        raising=False,
+    )
+
+    client = backend.connect_to_weaviate(force_refresh=True)
+
+    assert client is dummy_client
+    assert captured_kwargs["cluster_url"] == "https://cloud"
+    assert captured_kwargs["auth_credentials"] == ("api_key", "api-key")
+    assert captured_kwargs["headers"] == {"X-OpenAI-Api-Key": "openai-key"}
+    assert "timeout" not in captured_kwargs
+    assert "grpc" not in captured_kwargs
+    assert isinstance(captured_kwargs["timeout_config"], DummyTimeout)
+    assert captured_kwargs["timeout_config"].kwargs == {
+        "init": 10,
+        "insert": 120,
+        "query": 60,
+    }
+
+    backend.close_cached_weaviate_client()
+
+
+def test_connect_to_weaviate_falls_back_to_legacy_helper(monkeypatch):
+    backend.close_cached_weaviate_client()
+
+    monkeypatch.setenv("WEAVIATE_URL", "https://cloud")
+    monkeypatch.setenv("WEAVIATE_API_KEY", "api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+
+    class DummyAuth:
+        @staticmethod
+        def api_key(value):
+            return ("api_key", value)
+
+    class DummyTimeout:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(backend, "Auth", DummyAuth)
+    monkeypatch.setattr(backend, "Timeout", DummyTimeout)
+
+    monkeypatch.delattr(backend.weaviate, "connect_to_weaviate_cloud", raising=False)
+    monkeypatch.setattr(backend.weaviate, "connect", types.SimpleNamespace(), raising=False)
+
+    captured_kwargs = {}
+    dummy_client = object()
+
+    def fake_connect_to_wcs(**kwargs):
+        captured_kwargs.update(kwargs)
+        return dummy_client
+
+    monkeypatch.setattr(backend.weaviate, "connect_to_wcs", fake_connect_to_wcs, raising=False)
+
+    client = backend.connect_to_weaviate(force_refresh=True)
+
+    assert client is dummy_client
+    assert captured_kwargs["cluster_url"] == "https://cloud"
+    assert captured_kwargs["auth_credentials"] == ("api_key", "api-key")
+    assert captured_kwargs["headers"] == {"X-OpenAI-Api-Key": "openai-key"}
+    assert "timeout" not in captured_kwargs
+    assert "grpc" not in captured_kwargs
+
+    additional_config = captured_kwargs["additional_config"]
+    assert additional_config is not None
+    assert additional_config.kwargs["timeout"].kwargs == {
+        "init": 10,
+        "insert": 120,
+        "query": 60,
+    }
+
+    backend.close_cached_weaviate_client()
 
 
 def test_fetch_report_returns_content(mock_airtable):

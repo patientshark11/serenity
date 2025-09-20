@@ -49,6 +49,7 @@ sys.modules["weaviate"] = weaviate_module
 sys.modules["weaviate.classes"] = classes_module
 sys.modules["weaviate.classes.config"] = config_module
 sys.modules["weaviate.classes.init"] = init_module
+sys.modules["weaviate.config"] = config_module
 
 pyairtable_module = types.ModuleType("pyairtable")
 

@@ -32,7 +32,13 @@ def _connect_to_weaviate_cloud(**kwargs):
             connect_helper = getattr(connect_module, "connect_to_weaviate_cloud", None)
 
     if connect_helper is not None:
-        return connect_helper(**kwargs)
+        modern_kwargs = dict(kwargs)
+        timeout = modern_kwargs.pop("timeout", None)
+        modern_kwargs.pop("grpc", None)
+        if timeout is not None:
+            modern_kwargs["timeout_config"] = timeout
+
+        return connect_helper(**modern_kwargs)
 
     timeout = kwargs.pop("timeout", None)
     kwargs.pop("grpc", None)
