@@ -23,7 +23,7 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 REPORT_MODE = os.environ.get("REPORT_MODE", "map-reduce")  # "map-reduce" or "simple"
-MAP_MODEL = os.environ.get("OPENAI_MAP_MODEL", "gpt-4o-mini-2024-07-18")
+MAP_MODEL = os.environ.get("OPENAI_MAP_MODEL", backend.DEFAULT_MAP_MODEL)
 GENERATE_PDF = True  # Set to False to skip PDF generation
 
 def _safe_int_env(var_name, default):
