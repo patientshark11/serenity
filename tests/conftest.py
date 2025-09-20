@@ -39,8 +39,17 @@ class DummyAdditionalConfig:
         self.kwargs = kwargs
 
 
+class DummyAuth:
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+
+    @classmethod
+    def api_key(cls, api_key):
+        return cls(api_key)
+
+
 config_module.AdditionalConfig = DummyAdditionalConfig
-init_module.Auth = object
+init_module.Auth = DummyAuth
 init_module.Timeout = DummyTimeout
 classes_module.config = config_module
 classes_module.init = init_module
@@ -49,6 +58,7 @@ sys.modules["weaviate"] = weaviate_module
 sys.modules["weaviate.classes"] = classes_module
 sys.modules["weaviate.classes.config"] = config_module
 sys.modules["weaviate.classes.init"] = init_module
+sys.modules["weaviate.config"] = config_module
 
 pyairtable_module = types.ModuleType("pyairtable")
 

@@ -32,10 +32,17 @@ def _connect_to_weaviate_cloud(**kwargs):
             connect_helper = getattr(connect_module, "connect_to_weaviate_cloud", None)
 
     if connect_helper is not None:
-        return connect_helper(**kwargs)
+        modern_kwargs = dict(kwargs)
+        timeout = modern_kwargs.pop("timeout", None)
+        modern_kwargs.pop("grpc", None)
+        if timeout is not None and "timeout_config" not in modern_kwargs:
+            modern_kwargs["timeout_config"] = timeout
 
-    timeout = kwargs.pop("timeout", None)
-    kwargs.pop("grpc", None)
+        return connect_helper(**modern_kwargs)
+
+    legacy_kwargs = dict(kwargs)
+    timeout = legacy_kwargs.pop("timeout", None)
+    legacy_kwargs.pop("grpc", None)
 
     try:
         from weaviate.config import AdditionalConfig
@@ -47,9 +54,9 @@ def _connect_to_weaviate_cloud(**kwargs):
         )
 
     return weaviate.connect_to_wcs(
-        cluster_url=kwargs["cluster_url"],
-        auth_credentials=kwargs.get("auth_credentials"),
-        headers=kwargs.get("headers"),
+        cluster_url=legacy_kwargs["cluster_url"],
+        auth_credentials=legacy_kwargs.get("auth_credentials"),
+        headers=legacy_kwargs.get("headers"),
         additional_config=additional_config,
     )
 

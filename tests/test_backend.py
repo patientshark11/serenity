@@ -3,6 +3,94 @@ import pytest
 import backend
 
 
+def test_connect_to_weaviate_uses_modern_helper(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    captured_kwargs = {}
+
+    def fake_connect_to_weaviate_cloud(**kwargs):
+        captured_kwargs.update(kwargs)
+        return DummyClient()
+
+    monkeypatch.setenv("WEAVIATE_URL", "https://example.com")
+    monkeypatch.setenv("WEAVIATE_API_KEY", "api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+
+    backend.close_cached_weaviate_client()
+
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_weaviate_cloud",
+        fake_connect_to_weaviate_cloud,
+        raising=False,
+    )
+
+    try:
+        client = backend.connect_to_weaviate(force_refresh=True)
+        assert isinstance(client, DummyClient)
+        assert captured_kwargs["cluster_url"] == "https://example.com"
+        assert captured_kwargs["auth_credentials"].api_key == "api-key"
+        assert captured_kwargs["headers"] == {"X-OpenAI-Api-Key": "openai-key"}
+        assert "timeout" not in captured_kwargs
+        assert "grpc" not in captured_kwargs
+        assert captured_kwargs["timeout_config"].kwargs == {
+            "init": 10,
+            "query": 60,
+            "insert": 120,
+        }
+    finally:
+        backend.close_cached_weaviate_client()
+
+
+def test_connect_to_weaviate_falls_back_when_helper_missing(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    captured_kwargs = {}
+
+    def fake_connect_to_wcs(*, cluster_url, auth_credentials, headers, additional_config):
+        captured_kwargs["cluster_url"] = cluster_url
+        captured_kwargs["auth_credentials"] = auth_credentials
+        captured_kwargs["headers"] = headers
+        captured_kwargs["additional_config"] = additional_config
+        return DummyClient()
+
+    monkeypatch.setenv("WEAVIATE_URL", "https://example.com")
+    monkeypatch.setenv("WEAVIATE_API_KEY", "api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+
+    backend.close_cached_weaviate_client()
+
+    monkeypatch.setattr(backend.weaviate, "connect_to_weaviate_cloud", None, raising=False)
+    monkeypatch.setattr(backend.weaviate, "connect", None, raising=False)
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_wcs",
+        fake_connect_to_wcs,
+        raising=False,
+    )
+
+    try:
+        client = backend.connect_to_weaviate(force_refresh=True)
+        assert isinstance(client, DummyClient)
+        assert captured_kwargs["cluster_url"] == "https://example.com"
+        assert captured_kwargs["auth_credentials"].api_key == "api-key"
+        assert captured_kwargs["headers"] == {"X-OpenAI-Api-Key": "openai-key"}
+        timeout = captured_kwargs["additional_config"].kwargs["timeout"]
+        assert timeout.kwargs == {"init": 10, "query": 60, "insert": 120}
+    finally:
+        backend.close_cached_weaviate_client()
+
+
 def test_sanitize_name_removes_disallowed_characters():
     raw = "Report/Name's \"Test\""
     assert backend.sanitize_name(raw) == "ReportNames Test"
