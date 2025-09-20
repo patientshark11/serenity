@@ -7,6 +7,9 @@ import uuid # Import uuid for unique keys
 import subprocess
 import sys
 import hashlib
+from collections.abc import Mapping
+
+from sync_reports import _extract_text_fragment
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -294,10 +297,36 @@ else:
                     else:
                         streamed_chunks = []
 
+                        def _get_value(obj, key, default=None):
+                            if obj is None:
+                                return default
+                            if isinstance(obj, Mapping):
+                                return obj.get(key, default)
+                            return getattr(obj, key, default)
+
                         def _stream_and_cache():
                             for chunk in response:
-                                streamed_chunks.append(chunk)
-                                yield chunk
+                                text_fragment = ""
+
+                                try:
+                                    choices = _get_value(chunk, "choices") or []
+                                    first_choice = choices[0] if choices else None
+                                    if first_choice is not None:
+                                        delta = _get_value(first_choice, "delta")
+                                        if delta is not None:
+                                            text_fragment = _extract_text_fragment(delta) or ""
+                                        else:
+                                            message = _get_value(first_choice, "message")
+                                            if message is not None:
+                                                text_fragment = _extract_text_fragment(message) or ""
+
+                                    if not text_fragment:
+                                        text_fragment = _extract_text_fragment(chunk) or ""
+                                except Exception:
+                                    text_fragment = _extract_text_fragment(chunk) or ""
+
+                                streamed_chunks.append(text_fragment)
+                                yield text_fragment
 
                         st.write_stream(_stream_and_cache())
                         full_response = "".join(streamed_chunks)
