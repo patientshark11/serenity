@@ -75,7 +75,13 @@ def _connect_to_weaviate_cloud(**kwargs):
                             timeout_keyword = "timeout"
                             break
 
-            modern_kwargs[timeout_keyword or "timeout_config"] = timeout
+            if timeout_keyword is not None:
+                modern_kwargs[timeout_keyword] = timeout
+            else:
+                try:
+                    return connect_helper(**modern_kwargs, timeout=timeout)
+                except TypeError:
+                    modern_kwargs["timeout_config"] = timeout
 
         return connect_helper(**modern_kwargs)
 
