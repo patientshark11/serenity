@@ -16,7 +16,6 @@ import logging
 import backend
 import openai
 import traceback
-import base64
 from collections.abc import Mapping
 from pyairtable import Api
 from datetime import datetime
@@ -147,15 +146,9 @@ def generate_and_save_report(reports_table, name, generator_func):
         if "error" in report_content.lower() or "could not find" in report_content.lower():
             print(f"WARNING: Report for '{name}' generation resulted in a non-content message: {report_content}")
 
-        attachment = None
         if GENERATE_PDF:
             try:
                 pdf_bytes = backend.create_pdf(report_content, summary=name)
-                attachment = {
-                    "filename": f"{sanitized_name}.pdf",
-                    "base64": base64.b64encode(pdf_bytes).decode("ascii"),
-                    "contentType": "application/pdf",
-                }
                 print(f"PDF generated for '{name}' ({len(pdf_bytes)} bytes).")
             except Exception as pdf_err:
                 logging.error("Failed to generate PDF for '%s': %s", name, pdf_err)
@@ -167,9 +160,6 @@ def generate_and_save_report(reports_table, name, generator_func):
             "Content": report_content,
             "LastGenerated": datetime.now().isoformat(),
         }
-        if GENERATE_PDF and attachment:
-            record_to_save["PDF"] = [attachment]
-
         key_fields = [report_name_field]
         try:
             response = reports_table.batch_upsert(
