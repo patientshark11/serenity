@@ -21,6 +21,8 @@ _WEAVIATE_CLIENT_LOCK = threading.RLock()
 _cached_weaviate_client = None
 _cached_weaviate_config = None
 
+DEFAULT_MAP_MODEL = "gpt-4o-mini-2024-07-18"
+
 
 def _connect_to_weaviate_cloud(**kwargs):
     """Connect to Weaviate Cloud using the modern helper when available."""
@@ -349,6 +351,12 @@ def _collect_context(search_query, weaviate_client, openai_client, limit=20):
         logging.error(f"Failed to retrieve context from Weaviate: {e}")
         return ""
 
+def _resolve_map_model(map_model=None):
+    """Return the model to use for MAP steps, consulting env overrides."""
+
+    return map_model or os.getenv("OPENAI_MAP_MODEL", DEFAULT_MAP_MODEL)
+
+
 def _map_reduce_query(
     weaviate_client,
     openai_client,
@@ -377,7 +385,8 @@ def _map_reduce_query(
     entity_name : str, optional
         When provided, a targeted vector search is performed for this entity.
     map_model : str, optional
-        Model used for the MAP step, defaults to ``OPENAI_MAP_MODEL`` env var.
+        Model used for the MAP step, defaults to ``OPENAI_MAP_MODEL`` env var,
+        falling back to ``gpt-4o-mini-2024-07-18`` when unset.
     fallback_search : Mapping, optional
         Configuration applied when ``entity_name`` is not provided. Supports the
         keys ``query`` (text to embed), ``vector`` (pre-computed embedding),
@@ -390,7 +399,7 @@ def _map_reduce_query(
 
     collection = weaviate_client.collections.get(collection_name)
 
-    map_model = map_model or os.getenv("OPENAI_MAP_MODEL", "gpt-4o-mini-2024-07-18")
+    map_model = _resolve_map_model(map_model)
 
     items_to_process = []
     if entity_name:
