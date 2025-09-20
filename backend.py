@@ -1,6 +1,7 @@
 import os
 import atexit
 import threading
+import inspect
 from collections.abc import Mapping
 import weaviate
 import openai
@@ -56,7 +57,25 @@ def _connect_to_weaviate_cloud(**kwargs):
         timeout = modern_kwargs.pop("timeout", None)
         modern_kwargs.pop("grpc", None)
         if timeout is not None:
-            modern_kwargs["timeout_config"] = timeout
+            timeout_keyword = None
+            try:
+                signature = inspect.signature(connect_helper)
+            except (TypeError, ValueError):  # pragma: no cover - safety net for builtins
+                signature = None
+
+            if signature is not None:
+                parameters = signature.parameters
+                if "timeout" in parameters:
+                    timeout_keyword = "timeout"
+                elif "timeout_config" in parameters:
+                    timeout_keyword = "timeout_config"
+                else:
+                    for parameter in parameters.values():
+                        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                            timeout_keyword = "timeout"
+                            break
+
+            modern_kwargs[timeout_keyword or "timeout_config"] = timeout
 
         return connect_helper(**modern_kwargs)
 

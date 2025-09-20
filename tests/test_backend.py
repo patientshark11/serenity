@@ -72,10 +72,12 @@ def test_connect_to_weaviate_uses_modern_helper(monkeypatch):
     assert captured_kwargs["cluster_url"] == "https://cloud"
     assert captured_kwargs["auth_credentials"] == ("api_key", "api-key")
     assert captured_kwargs["headers"] == {"X-OpenAI-Api-Key": "openai-key"}
-    assert "timeout" not in captured_kwargs
     assert "grpc" not in captured_kwargs
-    assert isinstance(captured_kwargs["timeout_config"], DummyTimeout)
-    assert captured_kwargs["timeout_config"].kwargs == {
+    timeout_keys = {"timeout", "timeout_config"} & captured_kwargs.keys()
+    assert len(timeout_keys) == 1
+    timeout_key = timeout_keys.pop()
+    assert isinstance(captured_kwargs[timeout_key], DummyTimeout)
+    assert captured_kwargs[timeout_key].kwargs == {
         "init": 10,
         "insert": 120,
         "query": 60,
