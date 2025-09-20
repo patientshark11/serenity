@@ -46,6 +46,27 @@ def _resolve_reduce_model(model=None):
 def _connect_to_weaviate_cloud(**kwargs):
     """Connect to Weaviate Cloud using the modern helper when available."""
 
+    def _connect_via_wcs(original_kwargs):
+        legacy_kwargs = dict(original_kwargs)
+        timeout = legacy_kwargs.pop("timeout", None)
+        legacy_kwargs.pop("grpc", None)
+
+        try:
+            from weaviate.config import AdditionalConfig
+        except Exception:  # pragma: no cover - defensive import
+            additional_config = None
+        else:
+            additional_config = (
+                AdditionalConfig(timeout=timeout) if timeout is not None else None
+            )
+
+        return weaviate.connect_to_wcs(
+            cluster_url=legacy_kwargs["cluster_url"],
+            auth_credentials=legacy_kwargs.get("auth_credentials"),
+            headers=legacy_kwargs.get("headers"),
+            additional_config=additional_config,
+        )
+
     connect_helper = getattr(weaviate, "connect_to_weaviate_cloud", None)
     if connect_helper is None:
         connect_module = getattr(weaviate, "connect", None)
@@ -94,27 +115,13 @@ def _connect_to_weaviate_cloud(**kwargs):
             ):
                 timeout_value = modern_kwargs.pop("timeout_config")
                 modern_kwargs["timeout"] = timeout_value
-                return connect_helper(**modern_kwargs)
-            raise
+                try:
+                    return connect_helper(**modern_kwargs)
+                except TypeError:
+                    return _connect_via_wcs(kwargs)
+            return _connect_via_wcs(kwargs)
 
-    timeout = kwargs.pop("timeout", None)
-    kwargs.pop("grpc", None)
-
-    try:
-        from weaviate.config import AdditionalConfig
-    except Exception:  # pragma: no cover - defensive import
-        additional_config = None
-    else:
-        additional_config = (
-            AdditionalConfig(timeout=timeout) if timeout is not None else None
-        )
-
-    return weaviate.connect_to_wcs(
-        cluster_url=kwargs["cluster_url"],
-        auth_credentials=kwargs.get("auth_credentials"),
-        headers=kwargs.get("headers"),
-        additional_config=additional_config,
-    )
+    return _connect_via_wcs(kwargs)
 
 
 def _close_weaviate_client(client):

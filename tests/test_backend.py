@@ -213,6 +213,89 @@ def test_connect_to_weaviate_recovers_from_timeout_config_type_error(monkeypatch
     ]
 
 
+def test_connect_to_weaviate_falls_back_when_swap_fails(monkeypatch):
+    backend.close_cached_weaviate_client()
+
+    timeout_marker = object()
+    recorded_calls = []
+    legacy_calls = []
+    legacy_client = object()
+
+    def fake_connect_to_cloud(
+        *,
+        cluster_url,
+        auth_credentials=None,
+        headers=None,
+        timeout_config=None,
+        **kwargs,
+    ):
+        recorded_calls.append(
+            {
+                "cluster_url": cluster_url,
+                "auth_credentials": auth_credentials,
+                "headers": headers,
+                "timeout_config": timeout_config,
+                "extra_kwargs": dict(kwargs),
+            }
+        )
+        raise TypeError("unexpected keyword argument 'timeout_config'")
+
+    def fake_connect_to_wcs(**kwargs):
+        legacy_calls.append(kwargs)
+        return legacy_client
+
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_weaviate_cloud",
+        fake_connect_to_cloud,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend.weaviate,
+        "connect_to_wcs",
+        fake_connect_to_wcs,
+        raising=False,
+    )
+
+    result = backend._connect_to_weaviate_cloud(
+        cluster_url="https://cloud",
+        auth_credentials=("api_key", "value"),
+        headers={"X-OpenAI-Api-Key": "key"},
+        timeout=timeout_marker,
+        grpc=True,
+    )
+
+    assert result is legacy_client
+    assert recorded_calls == [
+        {
+            "cluster_url": "https://cloud",
+            "auth_credentials": ("api_key", "value"),
+            "headers": {"X-OpenAI-Api-Key": "key"},
+            "timeout_config": timeout_marker,
+            "extra_kwargs": {},
+        },
+        {
+            "cluster_url": "https://cloud",
+            "auth_credentials": ("api_key", "value"),
+            "headers": {"X-OpenAI-Api-Key": "key"},
+            "timeout_config": None,
+            "extra_kwargs": {"timeout": timeout_marker},
+        },
+    ]
+
+    assert len(legacy_calls) == 1
+    legacy_kwargs = legacy_calls[0]
+    assert legacy_kwargs["cluster_url"] == "https://cloud"
+    assert legacy_kwargs["auth_credentials"] == ("api_key", "value")
+    assert legacy_kwargs["headers"] == {"X-OpenAI-Api-Key": "key"}
+    assert "timeout" not in legacy_kwargs
+    assert "grpc" not in legacy_kwargs
+
+    additional_config = legacy_kwargs["additional_config"]
+    assert additional_config is not None
+    assert additional_config.kwargs["timeout"] is timeout_marker
+
+
 def test_connect_to_weaviate_falls_back_to_legacy_helper(monkeypatch):
     backend.close_cached_weaviate_client()
 
