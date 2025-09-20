@@ -25,7 +25,23 @@ class _Vectorizer:
 config_module.Configure = types.SimpleNamespace(Vectorizer=_Vectorizer)
 config_module.Property = object
 config_module.DataType = object
+
+
+class DummyTimeout:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+class DummyAdditionalConfig:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+config_module.AdditionalConfig = DummyAdditionalConfig
 init_module.Auth = object
+init_module.Timeout = DummyTimeout
 classes_module.config = config_module
 classes_module.init = init_module
 weaviate_module.classes = classes_module
