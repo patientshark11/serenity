@@ -22,6 +22,7 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 REPORT_MODE = os.environ.get("REPORT_MODE", "map-reduce")  # "map-reduce" or "simple"
+MAP_MODEL = os.environ.get("OPENAI_MAP_MODEL", "gpt-4o-mini-2024-07-18")
 GENERATE_PDF = True  # Set to False to skip PDF generation
 
 def get_key_people():
@@ -243,14 +244,37 @@ def main():
 
     # --- 4. Reports Definition (easy to modify/expand) ---
     reports_to_generate = {
-        "Timeline": lambda: backend.generate_timeline(weaviate_client, openai_client, mode=REPORT_MODE),
-        "Conflict Report": lambda: backend.generate_report("Conflict Report", weaviate_client, openai_client, mode=REPORT_MODE),
-        "Legal Communication Summary": lambda: backend.generate_report("Legal Communication Summary", weaviate_client, openai_client, mode=REPORT_MODE),
+        "Timeline": lambda: backend.generate_timeline(
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        ),
+        "Conflict Report": lambda: backend.generate_report(
+            "Conflict Report",
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        ),
+        "Legal Communication Summary": lambda: backend.generate_report(
+            "Legal Communication Summary",
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        ),
     }
 
     key_people = get_key_people()
     for person in key_people:
-        reports_to_generate[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(p, weaviate_client, openai_client, mode=REPORT_MODE)
+        reports_to_generate[f"Summary for {person}"] = lambda p=person: backend.summarize_entity(
+            p,
+            weaviate_client,
+            openai_client,
+            mode=REPORT_MODE,
+            map_model=MAP_MODEL,
+        )
 
     # --- 5. Generate & Save Reports ---
     failed_reports = []

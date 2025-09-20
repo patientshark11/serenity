@@ -209,3 +209,82 @@ def test_fetch_reports_uses_single_api_and_no_resource_warning(monkeypatch):
     assert len(reports) == 3
     assert all(content == "Mocked content" for content in reports.values())
     assert len(w) == 0
+
+
+def test_map_reduce_query_uses_distinct_models():
+    class DummyItem:
+        def __init__(self, chunk):
+            self.properties = {"chunk_content": chunk}
+
+    class DummyCollection:
+        def iterator(self):
+            return [DummyItem("chunk one"), DummyItem("chunk two")]
+
+    class DummyCollections:
+        def __init__(self):
+            self._collection = DummyCollection()
+
+        def exists(self, name):
+            return True
+
+        def get(self, name):
+            return self._collection
+
+    class DummyWeaviateClient:
+        def __init__(self):
+            self.collections = DummyCollections()
+
+    class RecordingCompletions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("stream"):
+                return iter(["stream"])
+
+            class Message:
+                def __init__(self, content):
+                    self.content = content
+
+            class Choice:
+                def __init__(self, content):
+                    self.message = Message(content)
+
+            class Response:
+                def __init__(self, content):
+                    self.choices = [Choice(content)]
+
+            return Response("Mapped info")
+
+    class DummyChat:
+        def __init__(self, completions):
+            self.completions = completions
+
+    class DummyOpenAIClient:
+        def __init__(self, completions):
+            self.chat = DummyChat(completions)
+
+    completions = RecordingCompletions()
+    openai_client = DummyOpenAIClient(completions)
+    weaviate_client = DummyWeaviateClient()
+
+    result = backend._map_reduce_query(
+        weaviate_client,
+        openai_client,
+        map_prompt_template="{chunk_content}",
+        reduce_prompt_template="{combined_text}",
+        model="reduce-model",
+        map_model="map-model",
+    )
+
+    # Reduce step should stream content when a report is generated
+    assert hasattr(result, "__iter__")
+
+    map_calls = [call for call in completions.calls if not call.get("stream")]
+    reduce_calls = [call for call in completions.calls if call.get("stream")]
+
+    assert map_calls, "Expected MAP calls to be recorded"
+    assert {call["model"] for call in map_calls} == {"map-model"}
+    assert len(reduce_calls) == 1
+    assert reduce_calls[0]["model"] == "reduce-model"
