@@ -325,7 +325,15 @@ def _collect_context(search_query, weaviate_client, openai_client, limit=20):
         logging.error(f"Failed to retrieve context from Weaviate: {e}")
         return ""
 
-def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model="gpt-4", entity_name=None):
+def _map_reduce_query(
+    weaviate_client,
+    openai_client,
+    map_prompt_template,
+    reduce_prompt_template,
+    model="gpt-4",
+    entity_name=None,
+    map_model=None,
+):
     """
     A generic map-reduce framework for querying Weaviate, processing chunks, and summarizing.
     If an entity_name is provided, it performs a targeted search. Otherwise, it iterates through all docs.
@@ -335,6 +343,8 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         return "The document collection does not exist. Please run the data sync first."
 
     collection = weaviate_client.collections.get(collection_name)
+
+    map_model = map_model or os.getenv("OPENAI_MAP_MODEL", "gpt-4o-mini-2024-07-18")
 
     items_to_process = []
     if entity_name:
@@ -356,7 +366,7 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         map_prompt = map_prompt_template.format(chunk_content=chunk_content, entity_name=entity_name)
         try:
             response = openai_client.chat.completions.create(
-                model=model,
+                model=map_model,
                 messages=[{"role": "system", "content": "You are an expert data extractor."}, {"role": "user", "content": map_prompt}],
                 timeout=30
             )
@@ -388,7 +398,13 @@ def _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduc
         logging.error(f"Error during REDUCE step: {e}")
         return "An error occurred while finalizing the report. Please check the logs."
 
-def generate_timeline(weaviate_client, openai_client, model="gpt-4", mode="map-reduce"):
+def generate_timeline(
+    weaviate_client,
+    openai_client,
+    model="gpt-4",
+    mode="map-reduce",
+    map_model=None,
+):
     """Generates a chronological timeline of events from stored documents."""
     if mode == "map-reduce":
         # Use map-reduce logic for best accuracy
@@ -404,7 +420,14 @@ def generate_timeline(weaviate_client, openai_client, model="gpt-4", mode="map-r
         {combined_text}
         ---
         """
-        return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model)
+        return _map_reduce_query(
+            weaviate_client,
+            openai_client,
+            map_prompt_template,
+            reduce_prompt_template,
+            model=model,
+            map_model=map_model,
+        )
     else:
         # Use simple context aggregation (fast, less accurate)
         context = _collect_context("Create a chronological timeline of key events.", weaviate_client, openai_client, limit=40)
@@ -424,7 +447,14 @@ def generate_timeline(weaviate_client, openai_client, model="gpt-4", mode="map-r
         )
         return response.choices[0].message.content
 
-def generate_report(report_type, weaviate_client, openai_client, model="gpt-4", mode="map-reduce"):
+def generate_report(
+    report_type,
+    weaviate_client,
+    openai_client,
+    model="gpt-4",
+    mode="map-reduce",
+    map_model=None,
+):
     """Generates a specific report type using stored documents."""
     if mode == "map-reduce":
         map_prompt_template = """
@@ -439,7 +469,15 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4", 
         {combined_text}
         ---
         """
-        return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=report_type)
+        return _map_reduce_query(
+            weaviate_client,
+            openai_client,
+            map_prompt_template,
+            reduce_prompt_template,
+            model=model,
+            entity_name=report_type,
+            map_model=map_model,
+        )
     else:
         query = f"Generate a {report_type} based on the documentation."
         context = _collect_context(query, weaviate_client, openai_client, limit=40)
@@ -459,7 +497,14 @@ def generate_report(report_type, weaviate_client, openai_client, model="gpt-4", 
         )
         return response.choices[0].message.content
 
-def summarize_entity(entity, weaviate_client, openai_client, model="gpt-4", mode="map-reduce"):
+def summarize_entity(
+    entity,
+    weaviate_client,
+    openai_client,
+    model="gpt-4",
+    mode="map-reduce",
+    map_model=None,
+):
     """Summarizes information about a specific entity from the documents."""
     if mode == "map-reduce":
         map_prompt_template = """
@@ -474,7 +519,15 @@ def summarize_entity(entity, weaviate_client, openai_client, model="gpt-4", mode
         {combined_text}
         ---
         """
-        return _map_reduce_query(weaviate_client, openai_client, map_prompt_template, reduce_prompt_template, model, entity_name=entity)
+        return _map_reduce_query(
+            weaviate_client,
+            openai_client,
+            map_prompt_template,
+            reduce_prompt_template,
+            model=model,
+            entity_name=entity,
+            map_model=map_model,
+        )
     else:
         query = f"Summarize all available information about {entity}."
         context = _collect_context(query, weaviate_client, openai_client, limit=40)
