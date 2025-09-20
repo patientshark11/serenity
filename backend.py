@@ -2,7 +2,6 @@ import os
 import atexit
 import threading
 from collections.abc import Mapping
-import inspect
 import weaviate
 import openai
 from pyairtable import Api
@@ -21,6 +20,38 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 _WEAVIATE_CLIENT_LOCK = threading.RLock()
 _cached_weaviate_client = None
 _cached_weaviate_config = None
+
+
+def _connect_to_weaviate_cloud(**kwargs):
+    """Connect to Weaviate Cloud using the modern helper when available."""
+
+    connect_helper = getattr(weaviate, "connect_to_weaviate_cloud", None)
+    if connect_helper is None:
+        connect_module = getattr(weaviate, "connect", None)
+        if connect_module is not None:
+            connect_helper = getattr(connect_module, "connect_to_weaviate_cloud", None)
+
+    if connect_helper is not None:
+        return connect_helper(**kwargs)
+
+    timeout = kwargs.pop("timeout", None)
+    kwargs.pop("grpc", None)
+
+    try:
+        from weaviate.config import AdditionalConfig
+    except Exception:  # pragma: no cover - defensive import
+        additional_config = None
+    else:
+        additional_config = (
+            AdditionalConfig(timeout=timeout) if timeout is not None else None
+        )
+
+    return weaviate.connect_to_wcs(
+        cluster_url=kwargs["cluster_url"],
+        auth_credentials=kwargs.get("auth_credentials"),
+        headers=kwargs.get("headers"),
+        additional_config=additional_config,
+    )
 
 
 def _close_weaviate_client(client):
@@ -69,28 +100,15 @@ def connect_to_weaviate(force_refresh=False):
             _close_weaviate_client(client_to_close)
 
         try:
-            connect_kwargs = {
-                "cluster_url": desired_config[0],
-                "auth_credentials": Auth.api_key(desired_config[1]),
-                "headers": {"X-OpenAI-Api-Key": desired_config[2]},
-            }
-
-            signature = inspect.signature(weaviate.connect_to_wcs)
-            parameters = signature.parameters
-
-            if "grpc" in parameters:
-                connect_kwargs["grpc"] = False
-
             timeout = Timeout(init=10, query=60, insert=120)
 
-            if "timeout" in parameters:
-                connect_kwargs["timeout"] = timeout
-            elif "additional_config" in parameters:
-                from weaviate.config import AdditionalConfig
-
-                connect_kwargs["additional_config"] = AdditionalConfig(timeout=timeout)
-
-            client = weaviate.connect_to_wcs(**connect_kwargs)
+            client = _connect_to_weaviate_cloud(
+                cluster_url=desired_config[0],
+                auth_credentials=Auth.api_key(desired_config[1]),
+                headers={"X-OpenAI-Api-Key": desired_config[2]},
+                timeout=timeout,
+                grpc=False,
+            )
         except Exception as e:
             logging.error(f"Failed to connect to Weaviate: {e}")
             raise
