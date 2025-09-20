@@ -56,8 +56,8 @@ def _connect_to_weaviate_cloud(**kwargs):
         modern_kwargs = dict(kwargs)
         timeout = modern_kwargs.pop("timeout", None)
         modern_kwargs.pop("grpc", None)
+        timeout_keyword = None
         if timeout is not None:
-            timeout_keyword = None
             try:
                 signature = inspect.signature(connect_helper)
             except (TypeError, ValueError):  # pragma: no cover - safety net for builtins
@@ -82,8 +82,20 @@ def _connect_to_weaviate_cloud(**kwargs):
                     return connect_helper(**modern_kwargs, timeout=timeout)
                 except TypeError:
                     modern_kwargs["timeout_config"] = timeout
+                    timeout_keyword = "timeout_config"
 
-        return connect_helper(**modern_kwargs)
+        try:
+            return connect_helper(**modern_kwargs)
+        except TypeError as exc:
+            if (
+                timeout_keyword == "timeout_config"
+                and "timeout_config" in modern_kwargs
+                and "timeout_config" in str(exc)
+            ):
+                timeout_value = modern_kwargs.pop("timeout_config")
+                modern_kwargs["timeout"] = timeout_value
+                return connect_helper(**modern_kwargs)
+            raise
 
     timeout = kwargs.pop("timeout", None)
     kwargs.pop("grpc", None)
