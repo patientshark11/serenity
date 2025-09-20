@@ -1,5 +1,4 @@
 import pytest
-import base64
 import backend
 import sync_reports
 from sync_reports import generate_and_save_report
@@ -15,7 +14,7 @@ class DummyTable:
         return [{"id": "rec1", "fields": records[0]["fields"]}]
 
 
-def test_generate_and_save_report_sends_base64_pdf(monkeypatch):
+def test_generate_and_save_report_skips_pdf_field(monkeypatch):
     table = DummyTable()
 
     def generator_func():
@@ -28,14 +27,8 @@ def test_generate_and_save_report_sends_base64_pdf(monkeypatch):
     fields = table.upserts[0][0][0]["fields"]
 
     assert fields["Name"] == backend.sanitize_name("Sample Person")
-    assert "PDF" in fields
-    attachment = fields["PDF"][0]
-    assert attachment["filename"] == f"{backend.sanitize_name('Sample Person')}.pdf"
-    assert attachment["contentType"] == "application/pdf"
-    assert isinstance(attachment["base64"], str)
-    decoded = base64.b64decode(attachment["base64"])
-    expected_pdf = backend.create_pdf("Report body", summary="Sample Person")
-    assert decoded == expected_pdf
+    assert "PDF" not in fields
+    assert set(fields.keys()) == {"Name", "Content", "LastGenerated"}
 
 
 def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
@@ -54,10 +47,10 @@ def test_generate_and_save_report_respects_custom_name_field(monkeypatch):
     assert fields["ReportLabel"] == backend.sanitize_name("Custom Person")
     assert "Name" not in fields
     assert key_fields == ["ReportLabel"]
-    assert "PDF" in fields
+    assert "PDF" not in fields
 
 
-def test_generate_and_save_report_attachment_structure():
+def test_generate_and_save_report_request_fields_are_supported():
     table = DummyTable()
 
     def generator_func():
@@ -66,8 +59,9 @@ def test_generate_and_save_report_attachment_structure():
     generate_and_save_report(table, "Another Person", generator_func)
 
     records, key_fields = table.upserts[0]
-    attachment = records[0]["fields"]["PDF"][0]
-    assert set(attachment.keys()) == {"filename", "base64", "contentType"}
+    fields = records[0]["fields"]
+    assert "PDF" not in fields
+    assert set(fields.keys()) == {"Name", "Content", "LastGenerated"}
 
 
 class FailingTable:
