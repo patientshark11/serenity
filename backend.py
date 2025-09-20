@@ -391,7 +391,9 @@ def _map_reduce_query(
         Configuration applied when ``entity_name`` is not provided. Supports the
         keys ``query`` (text to embed), ``vector`` (pre-computed embedding),
         ``type`` ("near_vector" or "bm25"), ``limit`` (max chunks), and
-        ``options`` (extra query kwargs).
+        ``options`` (extra query kwargs). When ``options`` are omitted, the
+        environment variable ``MAP_REDUCE_FALLBACK_OPTIONS`` is parsed (as
+        JSON) to provide defaults.
     """
     collection_name = "CustodyDocs"
     if not weaviate_client.collections.exists(collection_name):
@@ -437,9 +439,26 @@ def _map_reduce_query(
         search_type = (search_type or "near_vector").lower()
 
         search_options = fallback_search.get("options")
-        if not isinstance(search_options, Mapping):
-            search_options = {}
-        search_options = dict(search_options)
+        if isinstance(search_options, Mapping):
+            search_options = dict(search_options)
+        else:
+            raw_options = os.getenv("MAP_REDUCE_FALLBACK_OPTIONS")
+            if raw_options:
+                try:
+                    parsed = json.loads(raw_options)
+                except json.JSONDecodeError:
+                    logging.warning(
+                        "MAP_REDUCE_FALLBACK_OPTIONS is not valid JSON. Ignoring provided value."
+                    )
+                else:
+                    if isinstance(parsed, Mapping):
+                        search_options = dict(parsed)
+                    else:
+                        logging.warning(
+                            "MAP_REDUCE_FALLBACK_OPTIONS must decode to a mapping. Ignoring value."
+                        )
+            if not isinstance(search_options, Mapping):
+                search_options = {}
 
         return_properties = search_options.pop("return_properties", ["chunk_content"])
 

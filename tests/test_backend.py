@@ -432,6 +432,103 @@ def test_map_reduce_query_uses_distinct_models(monkeypatch):
     assert captured_embedding["text"] == "timeline"
 
 
+def test_map_reduce_query_uses_env_fallback_options(monkeypatch):
+    class DummyItem:
+        def __init__(self, chunk):
+            self.properties = {"chunk_content": chunk}
+
+    class DummyQuery:
+        def __init__(self):
+            self.calls = []
+
+        def near_vector(self, **kwargs):
+            self.calls.append(kwargs)
+
+            class Response:
+                objects = [DummyItem("chunk one")]
+
+            return Response()
+
+    class DummyCollection:
+        def __init__(self):
+            self.query = DummyQuery()
+            self.iterator_called = False
+
+        def iterator(self):
+            self.iterator_called = True
+            return []
+
+    class DummyCollections:
+        def __init__(self, collection):
+            self._collection = collection
+
+        def exists(self, name):
+            return True
+
+        def get(self, name):
+            return self._collection
+
+    class DummyWeaviateClient:
+        def __init__(self, collection):
+            self.collections = DummyCollections(collection)
+
+    class RecordingCompletions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("stream"):
+                return iter(["stream"])
+
+            class Message:
+                def __init__(self, content):
+                    self.content = content
+
+            class Choice:
+                def __init__(self, content):
+                    self.message = Message(content)
+
+            class Response:
+                def __init__(self, content):
+                    self.choices = [Choice(content)]
+
+            return Response("Mapped info")
+
+    class DummyChat:
+        def __init__(self, completions):
+            self.completions = completions
+
+    class DummyOpenAIClient:
+        def __init__(self, completions):
+            self.chat = DummyChat(completions)
+
+    def fake_embedding(text, client):
+        return [0.1, 0.2]
+
+    monkeypatch.setattr(backend, "get_embedding", fake_embedding)
+    monkeypatch.setenv("MAP_REDUCE_FALLBACK_OPTIONS", "{\"alpha\": 0.75}")
+
+    completions = RecordingCompletions()
+    openai_client = DummyOpenAIClient(completions)
+    collection = DummyCollection()
+    weaviate_client = DummyWeaviateClient(collection)
+
+    backend._map_reduce_query(
+        weaviate_client,
+        openai_client,
+        map_prompt_template="{chunk_content}",
+        reduce_prompt_template="{combined_text}",
+        fallback_search={"query": "timeline", "limit": 1},
+    )
+
+    assert not collection.iterator_called, "Iterator should not be used when env options are set"
+    assert collection.query.calls, "Expected fallback search to issue a query"
+    call = collection.query.calls[0]
+    assert call["alpha"] == 0.75
+    assert call["return_properties"] == ["chunk_content"]
+
+
 def test_map_reduce_query_defaults_map_model_from_env(monkeypatch):
     class DummyItem:
         def __init__(self, chunk):
